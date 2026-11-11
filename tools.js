@@ -126,7 +126,17 @@ async function runBrief(v,silent){
   const d=D(); if(!d){ $("#out").innerHTML=`<div class="empty">자료를 불러오는 중이에요</div>`; return; }
   await d.ready;
   const name=v.apt.replace(/\s/g,"");
-  const cands=d.apts.filter(a=>a.n.replace(/\s/g,"")===name).concat(d.apts.filter(a=>a.n.replace(/\s/g,"").includes(name)&&a.n.replace(/\s/g,"")!==name)).slice(0,6);
+  const find=()=>d.apts.filter(a=>a.n.replace(/\s/g,"")===name).concat(d.apts.filter(a=>a.n.replace(/\s/g,"").includes(name)&&a.n.replace(/\s/g,"")!==name)).slice(0,6);
+  let cands=find();
+  if(name&&d.loadRegion){ // 국토부 직통: 그 단지가 있는 시군구 실거래를 받아 옴 (전국)
+    let code=cands[0]&&cands[0].c;
+    if(!cands.length&&d.findPlace){
+      $("#out").innerHTML=`<div class="empty">전국에서 단지를 찾는 중이에요…</div>`;
+      const pl=(await d.findPlace(v.apt)).find(p=>/아파트|주거/.test(p.category_name||""))||(await d.findPlace(v.apt+" 아파트"))[0];
+      if(pl) code=await d.codeAt(+pl.y,+pl.x);
+    }
+    if(code&&await d.loadRegion(code)) cands=find();
+  }
   if(!name||!cands.length){ $("#out").innerHTML=`<div class="empty">${name?"그 이름의 단지를 자료에서 못 찾았어요. 지도 탭 검색창에서 정확한 이름을 확인해 보세요.":"단지 이름을 넣어 주세요."}</div>`; return; }
   const a=cands[0]; const ar=d.areas(a);
   let key=parseInt(v.area,10); if(!ar.some(x=>x[0]===key)) key=[...ar].sort((x,y)=>y[1]-x[1])[0][0];
