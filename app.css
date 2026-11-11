@@ -232,3 +232,10 @@ label.btn{cursor:pointer}
 .tin2 .btns{margin-top:8px}
 .btn.rec{background:var(--red);color:#fff;border-color:var(--red);animation:recp 1.2s infinite}
 @keyframes recp{50%{opacity:.7}}
+
+.say{border:1px solid var(--pine);background:var(--pine-soft);border-radius:var(--r);padding:14px}
+.say label{display:block;font-weight:700;margin-bottom:6px}
+.say textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;font-size:15px;resize:vertical;background:#fff}
+.say .btns{margin-top:8px}
+.chip.miss{color:var(--faint);border-style:dashed}
+details.manual summary{cursor:pointer;color:var(--muted);font-size:14px;padding:6px 0}

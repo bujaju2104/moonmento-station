@@ -85,12 +85,16 @@ function renderTools(){
   const t=TOOLS.find(x=>x.id===curTool); const v0=saved[t.id]||{};
   box.innerHTML=`<button type="button" class="back">← AI 도구</button>
     <div><h1 class="view">${esc(t.name)}</h1><p class="lede" style="margin-top:4px">${esc(t.desc)}</p></div>
-    <div class="form">${t.f.map(f=>field(f,v0[f[0]])).join("")}</div>
+    ${t.id==="brief"?`<div class="say"><label for="say">🎤 말 한마디로 끝내기</label><textarea id="say" rows="3" placeholder="예) 남산타운 5동 1203호 34평 12층 김민수님 매도, 처음엔 19억2천에 내놨는데 지금은 18억5천에 팔고 싶대"></textarea>
+      <div class="btns"><button type="button" class="btn" id="saymic">🎤 말로 하기</button><button type="button" class="btn pri" id="saygo">알아서 채우고 만들기</button></div><div id="sayok"></div></div>
+      <details class="manual"><summary>직접 고치기 (칸마다 입력)</summary>`:""}
+    <div class="form">${t.f.map(f=>field(f,v0[f[0]])).join("")}</div>${t.id==="brief"?`</details>`:""}
     <div class="btns"><button type="button" class="btn pri" id="go">${t.auto?"브리핑 만들기":"지시문 만들기"}</button><button type="button" class="btn" id="clr">입력 지우기</button></div>
     <div id="out"></div>`;
   box.querySelector(".back").onclick=()=>{ curTool=null; renderTools(); };
   $("#clr").onclick=()=>{ delete saved[t.id]; keep(); renderTools(); };
   $("#go").onclick=()=>run(t);
+  if(t.id==="brief") bindSay(t);
   if(t.id==="brief"){ const SF=["dongho","floor","ask","first","base"]; const tg=()=>{ const sell=/매도/.test($("#f_purpose").value); SF.forEach(k=>{ const el=$("#f_"+k); if(el) el.closest(".field").hidden=!sell; }); }; $("#f_purpose").addEventListener("change",tg); tg(); if(!$("#f_base").value) $("#f_base").value=new Date(Date.now()+9*36e5).toISOString().slice(0,10); }
   if(t.id==="ad") t.f.forEach(f=>{ const el=$("#f_"+f[0]); if(el) el.addEventListener("input",()=>adCheck(t)); });
   if(Object.keys(v0).length) run(t,true);
@@ -169,6 +173,60 @@ async function runBrief(v,silent){
 
 
 
+
+/* ---------- 말 한마디 → 브리핑 칸 자동 채우기 ---------- */
+function moneyHits(s){
+  const re=/(\d+(?:\.\d+)?\s*억(?:\s*\d{1,4}(?:,\d{3})?\s*천?)?(?:\s*\d{1,4}\s*만)?|[일이삼사오육칠팔구십]+\s*억(?:\s*[일이삼사오육칠팔구]\s*천)?(?:\s*[일이삼사오육칠팔구십백]+\s*만)?)/g;
+  const out=[]; let m; const tm=MM._work&&MM._work.toMan;
+  while((m=re.exec(s))){ const v=tm?tm(m[1]):0; if(v>=1000) out.push({v,i:m.index,raw:m[1],ctx:s.slice(Math.max(0,m.index-14),m.index+m[1].length+12)}); }
+  return out;
+}
+function parseSay(text,d){
+  const r={}; const flat=text.replace(/\s+/g," "); const ns=flat.replace(/\s/g,"");
+  // 단지
+  let best=null; for(const a of d.apts){ const n=a.n.replace(/\s/g,""); if(n.length>=2&&ns.includes(n)&&(!best||n.length>best.replace(/\s/g,"").length)) best=a.n; }
+  if(best) r.apt=best;
+  let m;
+  if((m=flat.match(/(\d{1,4})\s*동\s*(\d{1,4})\s*호/))) r.dongho=`${m[1]}동 ${m[2]}호`;
+  else if((m=flat.match(/(\d{3,4})\s*호/))) r.dongho=`${m[1]}호`;
+  if((m=flat.match(/(\d{1,2})\s*층/))) r.floor=m[1]; else if((m=flat.match(/(\d{1,2})(\d{2})\s*호/))) r.floor=m[1];
+  if((m=flat.match(/(\d{2,3}(?:\.\d+)?)\s*(?:㎡|m2|제곱|평방|타입|A타입|B타입)/i))) r.area=String(Math.floor(+m[1]));
+  else if((m=flat.match(/(\d{2})\s*평/))) r.py=+m[1];
+  if((m=flat.match(/([가-힣]{2,4})\s*(?:님|씨|고객|사장님|선생님)/))&&!/저희|우리|손님|매도|매수|중개|사장|아파트/.test(m[1])) r.client=m[1]+"님";
+  r.purpose=/매도|팔|내놓|내논|처분/.test(flat)?"매도 상담":/갈아타/.test(flat)?"갈아타기":/투자|갭/.test(flat)?"투자":/매수|사려|살려|구입|사고\s*싶/.test(flat)?"실거주 매수":"";
+  const H=moneyHits(flat);
+  H.forEach(h=>{ if(/처음|최초|원래|첫|맨\s*처음|초기/.test(h.ctx)) r.first=r.first||h.raw; else if(/희망|광고|내놓|내논|받고|팔고|호가|매도가|지금|현재|올려|불러/.test(h.ctx)) r.ask=h.raw; });
+  const rest=H.filter(h=>h.raw!==r.first&&h.raw!==r.ask);
+  if(!r.ask&&rest.length){ if(!r.first&&rest.length>=2&&/내렸|낮췄|조정|깎|내려/.test(flat)){ const s2=[...rest].sort((a,b)=>b.v-a.v); r.first=s2[0].raw; r.ask=s2[s2.length-1].raw; } else r.ask=rest[rest.length-1].raw; }
+  return r;
+}
+function micInto(ta,btn,done){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; let rec=null;
+  btn.onclick=()=>{
+    if(!SR){ toast("이 브라우저는 음성 입력이 안 돼요. 키보드의 마이크 버튼으로 말해 주세요"); ta.focus(); return; }
+    if(rec){ rec.stop(); return; }
+    rec=new SR(); rec.lang="ko-KR"; rec.continuous=true; rec.interimResults=true; let fin=""; const start=ta.value?ta.value.replace(/\s*$/," "):"";
+    rec.onresult=ev=>{ let tmp=""; for(let i=ev.resultIndex;i<ev.results.length;i++){ const x=ev.results[i][0].transcript; if(ev.results[i].isFinal) fin+=x+" "; else tmp+=x; } ta.value=start+fin+tmp; };
+    rec.onerror=ev=>toast(ev.error==="not-allowed"?"마이크 사용을 허용해 주세요":"음성 입력이 멈췄어요");
+    rec.onend=()=>{ rec=null; btn.textContent="🎤 말로 하기"; btn.classList.remove("rec"); if(fin.trim()) done(); };
+    rec.start(); btn.textContent="⏹ 다 말했어요"; btn.classList.add("rec"); toast("말씀하세요. 다 말하면 버튼을 다시 눌러 주세요");
+  };
+}
+function bindSay(t){
+  const ta=$("#say"); if(!ta) return;
+  const go=async()=>{ const d=D(); if(!d) return; await d.ready; const txt=ta.value.trim(); if(!txt){ toast("단지 이름과 내용을 말하거나 적어 주세요"); return; }
+    const r=parseSay(txt,d);
+    if(r.py&&r.apt){ const a=d.apts.find(x=>x.n===r.apt); if(a){ const target=r.py*3.3058*0.76; const ks=d.areas(a).map(x=>x[0]); r.area=String(ks.sort((x,y)=>Math.abs(x-target)-Math.abs(y-target))[0]); } }
+    const set=(k,v)=>{ const el=$("#f_"+k); if(el&&v!=null&&v!=="") el.value=v; };
+    ["apt","area","client","dongho","floor","ask","first"].forEach(k=>{ const el=$("#f_"+k); if(el) el.value=""; set(k,r[k]); });
+    if(r.purpose) set("purpose",r.purpose); $("#f_purpose").dispatchEvent(new Event("change"));
+    const L=[["단지",r.apt],["면적",r.area&&r.area+"㎡"+(r.py?` (${r.py}평으로 찾음)`:"")],["손님",r.client],["목적",r.purpose],["동·호수",r.dongho],["층",r.floor&&r.floor+"층"],["희망가(광고가)",r.ask],["최초 광고가",r.first]];
+    const sellOn=/매도/.test($("#f_purpose").value); const L2=sellOn?L:L.slice(0,4);
+    $("#sayok").innerHTML=`<div class="chips" style="margin-top:8px">${L2.map(([k,v])=>`<span class="chip ${v?"":"miss"}">${k}: ${v?esc(v):"못 알아들음"}</span>`).join("")}</div>${r.apt?"":`<p class="note">단지 이름을 못 찾았어요. 지도 자료에 있는 이름으로 다시 말해 주세요 (예: 남산타운, 래미안위브).</p>`}<p class="note" style="margin:4px 0 0">틀린 건 아래 '직접 고치기'에서 고치면 돼요.</p>`;
+    if(r.apt) run(t); };
+  $("#saygo").onclick=go;
+  micInto(ta,$("#saymic"),go);
+}
 /* ---------- 매도 손님용 가격 점검표 ---------- */
 function diffTxt(dm,baseV){ if(!dm) return "같음"; const a=Math.abs(dm); const amt=a>=10000?MM.data.wonShort(a):a.toLocaleString()+"만"; return `${dm>0?"+":"−"}${amt}${baseV?` (${dm>0?"+":"−"}${(a/baseV*100).toFixed(1)}%)`:""}`; }
 function sellStats({a,key,S,d}){
