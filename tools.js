@@ -227,14 +227,19 @@ function bindSay(t){
   $("#saygo").onclick=go;
   micInto(ta,$("#saymic"),go);
 }
+/* ---------- 최고가 · 전고점 ---------- */
+function peaks(T){ let high=T[0]; T.forEach(t=>{ if(t[1]>=high[1]) high=t; }); const before=T.filter(t=>t[0]<high[0]); let pp=null; before.forEach(t=>{ if(!pp||t[1]>pp[1]) pp=t; }); return {high,pp}; }
+function markPt(g,F,rr,X,Y,cx,cw,cy,t,label,col,below){ const px=X(t),py=Y(t[1]); g.beginPath(); g.arc(px,py,13,0,7); g.fillStyle="#fff"; g.fill(); g.lineWidth=5; g.strokeStyle=col; g.stroke();
+  g.font=F(700,24); const tw=g.measureText(label).width+24; const lx=Math.min(Math.max(px-tw/2,cx),cx+cw-tw); let ly=below?py+24:py-58; if(ly<cy-24) ly=py+24; rr(lx,ly,tw,40,10,col); g.fillStyle="#fff"; g.fillText(label,lx+12,ly+29); }
 /* ---------- 매도 손님용 가격 점검표 ---------- */
 function diffTxt(dm,baseV){ if(!dm) return "같음"; const a=Math.abs(dm); const amt=a>=10000?MM.data.wonShort(a):a.toLocaleString()+"만"; return `${dm>0?"+":"−"}${amt}${baseV?` (${dm>0?"+":"−"}${(a/baseV*100).toFixed(1)}%)`:""}`; }
 function sellStats({a,key,S,d}){
   const toD=n=>{ const s=String(n); return new Date(+s.slice(0,4),+s.slice(4,6)-1,+s.slice(6,8)); };
   const cut=toD(S.last[0]); cut.setDate(cut.getDate()-90);
   const r3=S.T.filter(t=>toD(t[0])>=cut); const avg3=r3.length?Math.round(r3.reduce((x,t)=>x+t[1],0)/r3.length):0;
+  let hi3=null; r3.forEach(t=>{ if(!hi3||t[1]>hi3[1]) hi3=t; }); const {pp}=peaks(S.T);
   const others=d.areas(a).filter(([k])=>k!==key).map(([k,n])=>({k,n,last:d.summary(a,k).last})).sort((x,y)=>Math.abs(x.k-key)-Math.abs(y.k-key)).slice(0,4).sort((x,y)=>x.k-y.k);
-  return {r3,avg3,others,toD};
+  return {r3,avg3,hi3,pp,others,toD};
 }
 async function sellImage(ctx){
   const {a,key,S,near,nm,asOf,d,dongho,floor,ask,first,base}=ctx;
@@ -242,7 +247,7 @@ async function sellImage(ctx){
   const W=1080,P=72, cv=document.createElement("canvas"); cv.width=W; cv.height=2400; const g=cv.getContext("2d");
   const F=(w,px,mono)=>`${w} ${px}px ${mono?"'IBM Plex Mono',":""}'IBM Plex Sans KR',sans-serif`;
   const C={ink:"#15201b",muted:"#5b6a63",faint:"#8a9690",line:"#dbe3df",soft:"#f4f7f5",pine:"#1d5c47",gold:"#a5761a",goldSoft:"#f6ecd6",red:"#b3372e"};
-  const won=d.won, ws=d.wonShort, ymd=d.ymd; const {r3,avg3,others,toD}=sellStats({a,key,S,d});
+  const won=d.won, ws=d.wonShort, ymd=d.ymd; const {r3,avg3,hi3,pp,others,toD}=sellStats({a,key,S,d});
   const rr=(x,y,w,h,r,fill)=>{ g.beginPath(); g.roundRect(x,y,w,h,r); g.fillStyle=fill; g.fill(); };
   const fit=(txt,font,max)=>{ let px=parseInt(font.match(/(\d+)px/)[1]); g.font=font; while(g.measureText(txt).width>max&&px>20){ px-=2; g.font=font.replace(/\d+px/,px+"px"); } return g.font; };
   const right=(txt,x,y)=>g.fillText(txt,x-g.measureText(txt).width,y);
@@ -262,7 +267,8 @@ async function sellImage(ctx){
   y+=boxH;
   // 같은 면적 비교표
   y+=56; g.fillStyle=C.ink; g.font=F(700,32); g.fillText(`같은 면적(전용 ${key}㎡) 실거래와 비교`,P,y); y+=24;
-  const rows=[["최근 실거래",S.last[1],`${ymd(S.last[0]).slice(2)} · ${S.last[3]}층`],["최근 3개월 평균",avg3,`${r3.length}건 평균`],["1년 최고가",S.high[1],`${ymd(S.high[0]).slice(2)} · ${S.high[3]}층`]].filter(r=>r[1]);
+  const fl=t=>`${ymd(t[0]).slice(2)} · ${t[3]}층`;
+  const rows=[["최근 실거래",S.last[1],fl(S.last)],["최근 최고가 (1년)",S.high[1],fl(S.high)],pp?["전고점",pp[1],fl(pp)]:null,["최근 3개월 평균",avg3,`${r3.length}건 평균`]].filter(r=>r&&r[1]);
   const c1=P+24, c2=P+330, c3=W-P-24; g.fillStyle=C.soft; g.fillRect(P,y,W-2*P,52); g.fillStyle=C.muted; g.font=F(700,24); g.fillText("구분",c1,y+35); g.fillText("실거래가",c2,y+35); right(ask?"희망가와 차이":"",c3,y+35); y+=52;
   rows.forEach(r=>{ g.fillStyle=C.ink; g.font=F(700,30); g.fillText(r[0],c1,y+46); g.fillStyle=C.faint; g.font=F(500,22); g.fillText(r[2],c1,y+76);
     g.fillStyle=C.ink; g.font=F(700,34,true); g.fillText(ws(r[1]),c2,y+56);
@@ -270,8 +276,8 @@ async function sellImage(ctx){
     y+=96; g.strokeStyle=C.line; g.lineWidth=2; g.beginPath(); g.moveTo(P,y); g.lineTo(W-P,y); g.stroke(); });
   if(ask){ y+=36; g.font=F(500,22); g.fillStyle=C.faint; g.fillText("희망가가 실거래보다 높으면 빨간색, 낮으면 초록색이에요.",P,y); }
   // 그래프
-  y+=56; g.fillStyle=C.ink; g.font=F(700,30); g.fillText("최근 1년 실거래 흐름과 희망가",P,y); y+=30;
-  const T=S.T, cx=P+70, cw=W-2*P-90, cy=y+10, ch=240;
+  y+=56; g.fillStyle=C.ink; g.font=F(700,30); g.fillText("최근 1년 실거래 흐름 · 최고가 · 전고점",P,y); y+=30;
+  const T=S.T, cx=P+70, cw=W-2*P-90, cy=y+10, ch=280;
   const xs=T.map(t=>toD(t[0]).getTime()), x0=Math.min(...xs), x1=Math.max(...xs);
   const vals=T.map(t=>t[1]).concat([ask,first].filter(Boolean)); let lo=Math.min(...vals), hi=Math.max(...vals); const pad=Math.max((hi-lo)*0.12,hi*0.03); lo-=pad; hi+=pad;
   const X=t=>cx+(x1===x0?cw/2:(toD(t[0]).getTime()-x0)/(x1-x0)*cw), Y=v=>cy+ch-(v-lo)/(hi-lo)*ch;
@@ -283,7 +289,10 @@ async function sellImage(ctx){
   if(ask) hline(ask,C.gold,"희망가 "+ws(ask));
   g.strokeStyle=C.pine; g.globalAlpha=.35; g.lineWidth=4; g.beginPath(); T.forEach((t,i)=>i?g.lineTo(X(t),Y(t[1])):g.moveTo(X(t),Y(t[1]))); g.stroke(); g.globalAlpha=1;
   T.forEach(t=>{ g.beginPath(); g.arc(X(t),Y(t[1]),7,0,7); g.fillStyle=C.pine; g.fill(); });
-  y=cy+ch+60;
+  if(pp) markPt(g,F,rr,X,Y,cx,cw,cy,pp,"전고점 "+ws(pp[1]),C.muted,true);
+  markPt(g,F,rr,X,Y,cx,cw,cy,S.high,"최고 "+ws(S.high[1]),C.gold,true);
+  if(S.last!==S.high) markPt(g,F,rr,X,Y,cx,cw,cy,S.last,"최근 "+ws(S.last[1]),C.pine,true);
+  y=cy+ch+70;
   // 다른 평형
   y+=40; g.fillStyle=C.ink; g.font=F(700,30); g.fillText("같은 단지 다른 평형 최근 실거래",P,y); y+=20;
   if(others.length){ others.forEach(o=>{ g.fillStyle=C.ink; g.font=F(700,28); g.fillText(`전용 ${o.k}㎡`,c1,y+46); g.font=F(700,30,true); g.fillText(ws(o.last[1]),c2,y+46);
@@ -319,15 +328,17 @@ async function briefImage(mode,{a,key,S,near,nm,asOf,d}){
   g.fillStyle=C.ink; g.font=fit(a.n,F(700,68),W-2*P); g.fillText(a.n,P,y+70); y+=70;
   g.fillStyle=C.muted; g.font=F(500,32); g.fillText(`${a.g} ${a.d} · 전용 ${key}㎡`,P,y+50); y+=50;
   // 큰 숫자
-  y+=36; rr(P,y,W-2*P,200,24,accSoft);
+  y+=36; rr(P,y,W-2*P,mode==="buy"?240:200,24,accSoft);
   const big=mode==="buy"?["최근 실거래가",last]:["최근 1년 최고가",high];
+  const {pp}=peaks(T);
   g.fillStyle=acc; g.font=F(700,30); g.fillText(big[0],P+40,y+60);
   g.fillStyle=C.ink; g.font=fit(won(big[1][1]),F(700,84,true),W-2*P-80); g.fillText(won(big[1][1]),P+40,y+150);
   g.fillStyle=C.muted; g.font=F(500,28); const sub=`${ymd(big[1][0])} · ${big[1][3]}층`; g.fillText(sub,W-P-40-g.measureText(sub).width,y+60);
-  y+=200;
+  if(mode==="buy"){ g.fillStyle=C.gold; g.font=F(700,28); const hl=`최근 최고가 ${won(high[1])} (${ymd(high[0]).slice(2)} · ${high[3]}층)`; g.fillText(hl,P+40,y+200); }
+  y+=mode==="buy"?240:200;
   // 3칸
   y+=28; const boxes=mode==="buy"
-    ?[["1년 최고가",ws(high[1]),ymd(high[0]).slice(2)],["최고가 대비",(gap>0?"+":"")+gap.toFixed(1)+"%",gap<0?"최근 거래가 더 낮음":gap>0?"최근 거래가 신고가":"최고가와 같음"],["최근 3개월 평균",avg3?ws(avg3):"거래 없음",`${r3.length}건 기준`]]
+    ?[pp?["전고점",ws(pp[1]),"최고가 이전 고점 "+ymd(pp[0]).slice(2)]:["1년 최저가",ws(low[1]),ymd(low[0]).slice(2)],["최고가 대비",(gap>0?"+":"")+gap.toFixed(1)+"%",gap<0?"최근 거래가 더 낮음":gap>0?"최근 거래가 신고가":"최고가와 같음"],["최근 3개월 평균",avg3?ws(avg3):"거래 없음",`${r3.length}건 기준`]]
     :[["최근 실거래",ws(last[1]),ymd(last[0]).slice(2)+" · "+last[3]+"층"],["최근 3개월 평균",avg3?ws(avg3):"거래 없음",`${r3.length}건 기준`],["1년 거래",S.n+"건",`최저 ${ws(low[1])}`]];
   const bw3=(W-2*P-2*20)/3;
   boxes.forEach((b,i)=>{ const x=P+i*(bw3+20); g.strokeStyle=C.line; g.lineWidth=2; g.beginPath(); g.roundRect(x,y,bw3,150,18); g.stroke();
@@ -337,7 +348,7 @@ async function briefImage(mode,{a,key,S,near,nm,asOf,d}){
   y+=150;
   // 그래프
   y+=40; g.fillStyle=C.ink; g.font=F(700,30); g.fillText(`전용 ${key}㎡ 실거래 흐름 (최근 1년)`,P,y); y+=24;
-  const cx=P+70, cw=W-2*P-90, cy=y+10, ch=260;
+  const cx=P+70, cw=W-2*P-90, cy=y+10, ch=230;
   const xs=T.map(t=>toD(t[0]).getTime()), x0=Math.min(...xs), x1=Math.max(...xs)||x0+1;
   let lo=Math.min(...T.map(t=>t[1])), hi=Math.max(...T.map(t=>t[1])); const pad=Math.max((hi-lo)*0.15,hi*0.03); lo-=pad; hi+=pad;
   const X=t=>cx+(x1===x0?cw/2:(toD(t[0]).getTime()-x0)/(x1-x0)*cw), Y=v=>cy+ch-(v-lo)/(hi-lo)*ch;
@@ -350,6 +361,7 @@ async function briefImage(mode,{a,key,S,near,nm,asOf,d}){
   T.forEach(t=>{ g.beginPath(); g.arc(X(t),Y(t[1]),7,0,7); g.fillStyle=acc; g.fill(); });
   const mark=(t,label,col)=>{ const px=X(t),py=Y(t[1]); g.beginPath(); g.arc(px,py,13,0,7); g.fillStyle="#fff"; g.fill(); g.lineWidth=5; g.strokeStyle=col; g.stroke();
     g.font=F(700,24); const tw=g.measureText(label).width+24; let lx=Math.min(Math.max(px-tw/2,cx),cx+cw-tw), ly=py-58; if(ly<cy-20) ly=py+24; rr(lx,ly,tw,40,10,col); g.fillStyle="#fff"; g.fillText(label,lx+12,ly+29); };
+  if(pp) mark(pp,"전고점 "+ws(pp[1]),C.muted);
   if(high!==last) mark(high,"최고 "+ws(high[1]),C.gold);
   mark(last,"최근 "+ws(last[1]),C.pine);
   y=cy+ch+100;
