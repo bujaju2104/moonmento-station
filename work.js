@@ -392,7 +392,7 @@ async function ocr(src,progress){
 }
 
 /* ---------- 일정 만들기 ---------- */
-const EV_COL={상담:"#0e7c86",계약:"#1d5c47",중도금:"#2f5f9e",잔금:"#b3372e",신고:"#a5761a",등기:"#7c4932",입주:"#2f5f9e",만료:"#b3372e",갱신:"#a5761a",토허:"#794698"};
+const EV_COL={할일:"#7a5bb5",상담:"#0e7c86",계약:"#1d5c47",중도금:"#2f5f9e",잔금:"#b3372e",신고:"#a5761a",등기:"#7c4932",입주:"#2f5f9e",만료:"#b3372e",갱신:"#a5761a",토허:"#794698"};
 function events(c){
   const nm=`${c.region||c.address||"계약"}${c.unit?" "+c.unit:""} ${c.kind}`.trim(); const E=[];
   const add=(d,type,t)=>{ if(d) E.push({d,type,t,cid:c.id,nm}); };
@@ -409,7 +409,8 @@ function events(c){
   return E;
 }
 const custEvents=()=>CUST.flatMap(c=>(c.appts||[]).filter(a=>a.on&&a.d).map(a=>({d:a.d,type:"상담",t:`${a.time?a.time+" ":""}${a.t}`,cid:"u:"+c.id,nm:`${c.name||"손님"}${c.type?" ("+c.type+")":""}`})));
-const allEvents=()=>CONS.flatMap(events).concat(custEvents()).sort((a,b)=>a.d.localeCompare(b.d)||a.t.localeCompare(b.t));
+const todoEvents=()=>TODO.filter(t=>!t.key&&!t.done&&t.d).map(t=>({d:t.d,type:"할일",t:`${t.time?t.time+" ":""}${t.text}`,cid:"t:"+t.id,nm:`내 할 일${t.cat?" · "+t.cat:""}`}));
+const allEvents=()=>CONS.flatMap(events).concat(custEvents(),todoEvents()).sort((a,b)=>a.d.localeCompare(b.d)||a.t.localeCompare(b.t));
 
 /* ---------- 계약·달력 화면 ---------- */
 let cTab="cal", cDraft=null, calYM=null, calSel=null, cBusy="";
@@ -449,7 +450,7 @@ function evList(E){
   return `<div class="list">${E.map(e=>{ const n=Math.round((new Date(e.d+"T00:00:00")-new Date(today+"T00:00:00"))/864e5);
     return `<button type="button" class="row evrow" data-open-c="${e.cid}" style="grid-template-columns:10px 1fr auto"><span style="width:6px;height:100%;border-radius:3px;background:${EV_COL[e.type]}"></span><span><span class="t">${esc(e.t)}</span><span class="s" style="display:block">${esc(e.nm)}</span></span><span class="r"><span class="num">${fmtD(e.d).slice(5)} (${wd(e.d)})</span><br><b style="color:${n<0?"var(--faint)":n<=3?"var(--red)":"var(--muted)"}">${n===0?"오늘":n>0?"D-"+n:(-n)+"일 지남"}</b></span></button>`; }).join("")}</div>`;
 }
-function bindEv(){ document.querySelectorAll("[data-open-c]").forEach(b=>b.onclick=()=>{ const id=b.dataset.openC; if(id.startsWith("u:")) openU(id.slice(2)); else openC(id); }); }
+function bindEv(){ document.querySelectorAll("[data-open-c]").forEach(b=>b.onclick=()=>{ const id=b.dataset.openC; if(id.startsWith("u:")) openU(id.slice(2)); else if(id.startsWith("t:")){ MM.show("home"); setTimeout(()=>{ const el=$("#todoSec"); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); },50); } else openC(id); }); }
 
 function cAdd(){
   $("#cbody").innerHTML=`<div class="out" style="background:#fff">
@@ -693,6 +694,87 @@ function openU(id){
   };
   draw();
 }
+
+/* ======================================================================
+   내 할 일 · 말이나 글로 넣으면 정리
+   ====================================================================== */
+const T_CAT=["연락","방문","계약","서류","광고","기타"];
+function tCat(x){
+  if(/계약|잔금|중도금|가계약|계약금/.test(x)) return "계약";
+  if(/서류|등기|신고|등본|대장|확인서|세금|취득세|토허|허가|은행|대출|발급|떼/.test(x)) return "서류";
+  if(/전화|통화|문자|카톡|연락|답장|안내/.test(x)) return "연락";
+  if(/보러|방문|임장|현장|미팅|만나|뵙|사진|촬영/.test(x)) return "방문";
+  if(/광고|블로그|올리|포스팅|릴스|인스타|카드뉴스|네이버|등록/.test(x)) return "광고";
+  return "기타";
+}
+function extraDate(x,base){
+  const b=new Date(base+"T00:00:00"); const mon=new Date(b); mon.setDate(b.getDate()-((b.getDay()+6)%7));
+  if(/이번\s*주\s*(안에|중|까지|내)/.test(x)){ const d=new Date(mon); d.setDate(mon.getDate()+4); return locISO(d<b?b:d); }
+  if(/다음\s*주\s*(안에|중|까지|내)?/.test(x)&&!/요일/.test(x)){ const d=new Date(mon); d.setDate(mon.getDate()+7); return locISO(d); }
+  if(/이번\s*달\s*(안에|중|까지|말)|월말/.test(x)) return locISO(new Date(b.getFullYear(),b.getMonth()+1,0));
+  if(/주말/.test(x)){ const d=new Date(mon); d.setDate(mon.getDate()+5); return locISO(d<b?b:d); }
+  return "";
+}
+function cleanTodo(x){
+  let t=x.replace(/^(음+|어+|아+|그+|자|일단|우선|먼저|그리고|또)[,.\s]+/,"")
+    .replace(/(오늘|금일|내일|낼|모레|글피)\s*(까지|중에|중으로|안에|에)?/g,"")
+    .replace(/(이번\s*주|다음\s*주|담주|다다음\s*주|돌아오는)?\s*[월화수목금토일]요일\s*(까지|에|날)?/g,"")
+    .replace(/(이번\s*주|다음\s*주|이번\s*달|월말|주말)\s*(안에|중에|중|까지|내|말)?/g,"")
+    .replace(/\d{1,2}\s*월\s*\d{1,2}\s*일\s*(까지|에)?/g,"")
+    .replace(/(오전|오후|아침|저녁|밤|낮|점심)?\s*\d{1,2}\s*시\s*(반|\d{1,2}\s*분)?\s*(까지|에)?/g,"")
+    .replace(/\s*(해야\s*(돼|되|해|함|합니다|겠다|겠어)|하기로\s*했어|할\s*것|하자|해야지|해야겠다|잊지\s*말고)[요.!]*$/,"")
+    .replace(/[,.\s]+$/,"").replace(/\s+(꼭|반드시|잊지\s*말고)$/,"").replace(/^[,.\s]+/,"").replace(/\s{2,}/g," ").trim();
+  return t.length>=2?t:x.trim();
+}
+function parseTodos(text){
+  const base=TODAY();
+  const parts=text.replace(/\r/g,"").split(/\n+|(?<=[.!?。])\s+|\s*(?:그리고|그\s*다음에?|그담에|다음으로|또\s+|하고\s+나서)\s*/).map(x=>x&&x.trim()).filter(x=>x&&x.length>=2);
+  return parts.map(x=>{ const ds=relDates(x,base); const d=ds.length?ds[0].d:extraDate(x,base);
+    return {id:uid(),text:cleanTodo(x),src:x,d,time:relTime(x),cat:tCat(x),imp:/급|꼭|반드시|중요|빨리|잊지/.test(x),done:false,added:base,on:true}; });
+}
+let tRec=null, tDraft=null;
+function todoInputHtml(){
+  return `<div class="tin2"><textarea id="tin" rows="2" placeholder="말하거나 적어 주세요. 여러 개도 한 번에 돼요.&#10;예) 내일 오전 10시 김OO님 잔금 서류 챙기기 그리고 금요일까지 신당10구역 매물 블로그 올리기"></textarea>
+    <div class="btns"><button type="button" class="btn" id="tmic">🎤 말로 입력</button><label class="btn" for="tfile">녹음 텍스트 넣기</label><input id="tfile" type="file" accept=".txt,text/plain" hidden><button type="button" class="btn pri" id="tgo">정리해서 추가</button></div>
+    <div id="tdraft">${tDraft?tDraftHtml():""}</div></div>`;
+}
+function tDraftHtml(){
+  return `<div class="out"><h3>할 일 ${tDraft.length}개로 정리했어요 (고칠 수 있어요)</h3><div class="appts">${tDraft.map(t=>`<div class="appt tdr" data-tid="${t.id}"><input type="checkbox" ${t.on?"checked":""} aria-label="추가하기"><input type="date" value="${t.d}"><input type="time" value="${t.time}"><input class="at" value="${esc(t.text)}" aria-label="할 일"><small>${esc(t.cat)}${t.imp?" · 중요":""} · "${esc(t.src.slice(0,60))}"</small></div>`).join("")}</div>
+    <div class="btns"><button type="button" class="btn pri" id="tsave">추가하기</button><button type="button" class="btn" id="tcancel">취소</button></div></div>`;
+}
+function readTDraft(){ document.querySelectorAll(".tdr").forEach(r=>{ const t=tDraft.find(x=>x.id===r.dataset.tid); if(!t) return; const [cb,dt,tm,tx]=r.querySelectorAll("input"); t.on=cb.checked; t.d=dt.value; t.time=tm.value; t.text=tx.value.trim()||t.text; t.cat=tCat(t.text+" "+t.src); }); }
+function addTodos(list){ list.filter(t=>t.on).forEach(t=>{ delete t.on; TODO.push(t); }); store(K_T,TODO); }
+function bindTodoInput(){
+  const ta=$("#tin"); if(!ta) return;
+  const go=()=>{ const v=ta.value.trim(); if(!v){ toast("할 일을 말하거나 적어 주세요"); return; }
+    const L=parseTodos(v); if(!L.length) return;
+    if(L.length===1){ addTodos(L); toast(`추가했어요${L[0].d?` · ${fmtD(L[0].d).slice(5)}${L[0].time?" "+L[0].time:""}`:""}`); renderHome(); return; }
+    tDraft=L; $("#tdraft").innerHTML=tDraftHtml(); bindTDraft(); };
+  $("#tgo").onclick=go;
+  ta.onkeydown=e=>{ if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); go(); } };
+  $("#tfile").onchange=async e=>{ const f=e.target.files[0]; if(!f) return; try{ ta.value=(await f.text()).slice(0,8000); go(); }catch(err){ toast("파일을 읽지 못했어요"); } };
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; const mic=$("#tmic");
+  mic.onclick=()=>{
+    if(!SR){ toast("이 브라우저는 음성 입력을 지원하지 않아요. 키보드의 마이크 버튼으로 말해 주세요"); ta.focus(); return; }
+    if(tRec){ tRec.stop(); return; }
+    const r=new SR(); r.lang="ko-KR"; r.continuous=true; r.interimResults=true; const start=ta.value?ta.value.replace(/\s*$/," "):""; let fin="";
+    r.onresult=ev=>{ let tmp=""; for(let i=ev.resultIndex;i<ev.results.length;i++){ const t=ev.results[i][0].transcript; if(ev.results[i].isFinal) fin+=t+"\n"; else tmp+=t; } ta.value=start+fin+tmp; };
+    r.onerror=ev=>{ toast(ev.error==="not-allowed"?"마이크 사용을 허용해 주세요":"음성 입력이 멈췄어요"); };
+    r.onend=()=>{ tRec=null; mic.textContent="🎤 말로 입력"; mic.classList.remove("rec"); if(ta.value.trim()&&fin) go(); };
+    tRec=r; r.start(); mic.textContent="⏹ 다 말했어요"; mic.classList.add("rec"); toast("말씀하세요. 다 말하면 버튼을 다시 눌러 주세요");
+  };
+  if(tDraft) bindTDraft();
+}
+function bindTDraft(){
+  $("#tsave").onclick=()=>{ readTDraft(); const n=tDraft.filter(t=>t.on).length; addTodos(tDraft); tDraft=null; toast(`할 일 ${n}개를 추가했어요`); renderHome(); };
+  $("#tcancel").onclick=()=>{ tDraft=null; $("#tdraft").innerHTML=""; };
+}
+function todoListHtml(todos){
+  const today=TODAY();
+  const L=todos.filter(t=>!t.key).sort((a,b)=>(a.done-b.done)||((a.d||"9999")+(a.time||"")).localeCompare((b.d||"9999")+(b.time||"")));
+  return `<ul class="todo">${L.map(t=>{ const n=t.d?Math.round((new Date(t.d+"T00:00:00")-new Date(today+"T00:00:00"))/864e5):null;
+    return `<li><label><input type="checkbox" data-tid="${t.id}" ${t.done?"checked":""}><span class="${t.done?"done":""}">${t.imp?`<b style="color:var(--red)">중요</b> `:""}${esc(t.text)}<br><small>${t.cat?`<span class="pill">${esc(t.cat)}</span> `:""}${t.d?`${fmtD(t.d).slice(5)} (${wd(t.d)})${t.time?" "+t.time:""} · <b style="color:${n<0?"var(--red)":n<=1?"var(--gold)":"var(--muted)"}">${n===0?"오늘":n>0?"D-"+n:(-n)+"일 지남"}</b>`:"날짜 없음"}</small></span></label><button type="button" class="linkbtn" data-tdel="${t.id}">삭제</button></li>`; }).join("")||`<li class="note">아직 할 일이 없어요</li>`}</ul>`;
+}
 /* ======================================================================
    홈 대시보드
    ====================================================================== */
@@ -717,7 +799,7 @@ function renderHome(){
   const next=E.filter(e=>e.d>we&&e.d<=addD(today,21));
   const active=CONS.filter(c=>{ const last=(c.kind==="매매"?c.balance:(c.balance||c.moveIn))||c.contract; return last&&last>=addD(today,-30); });
   const balWeek=week.filter(e=>e.type==="잔금").length;
-  const checks=[...late,...week].map(e=>({e,txt:CHECK[e.type]||""}));
+  const checks=[...late,...week].filter(e=>e.type!=="할일").map(e=>({e,txt:CHECK[e.type]||""}));
   const todos=TODO.filter(t=>!t.done||t.doneAt===today);
   const pol=(MM.policies||[]).slice(-2).reverse();
   const hour=new Date().getHours();
@@ -741,9 +823,9 @@ function renderHome(){
     </section>
     <section class="card2"><h2 class="sec2">이번 주 확인할 사항</h2>
       ${checks.length?`<ul class="todo">${checks.map(({e,txt})=>{ const k="auto-"+e.cid+"-"+e.d+"-"+e.type; const done=TODO.some(t=>t.key===k&&t.done); return `<li><label><input type="checkbox" data-auto="${esc(k)}" ${done?"checked":""}><span class="${done?"done":""}"><b>${fmtD(e.d).slice(5)} ${esc(e.t)}</b> · ${esc(e.nm)}<br><small>${esc(txt)}</small></span></label></li>`; }).join("")}</ul>`:`<div class="note">계약 일정에서 자동으로 뽑은 확인 사항이 여기에 나와요.</div>`}
-      <h3 class="sec3">내 할 일</h3>
-      <form id="tform" class="tform"><input id="tin" placeholder="할 일 추가 (예: 금요일 남산타운 매수자 통화)" autocomplete="off"><button class="btn pri" type="submit">추가</button></form>
-      <ul class="todo">${todos.filter(t=>!t.key).map(t=>`<li><label><input type="checkbox" data-tid="${t.id}" ${t.done?"checked":""}><span class="${t.done?"done":""}">${esc(t.text)}</span></label><button type="button" class="linkbtn" data-tdel="${t.id}">삭제</button></li>`).join("")||`<li class="note">아직 할 일이 없어요</li>`}</ul>
+      <h3 class="sec3" id="todoSec">내 할 일</h3>
+      ${todoInputHtml()}
+      ${todoListHtml(todos)}
     </section>
     ${pol.length?`<section class="card2"><h2 class="sec2">최근 부동산 대책</h2><div class="list">${pol.map(p=>`<button type="button" class="row" data-go="policy" style="grid-template-columns:1fr auto"><span><span class="t">${esc(p.title)}</span><span class="s" style="display:block">${esc(p.summary)}</span></span><span class="r num">${fmtD(p.date)}</span></button>`).join("")}</div></section>`:""}
     <p class="note">${active.length?`진행 중인 계약 ${active.length}건 · `:""}모든 자료는 이 기기에만 저장돼요.</p>`;
@@ -752,9 +834,9 @@ function renderHome(){
   box.querySelectorAll("[data-auto]").forEach(cb=>cb.onchange=()=>{ const k=cb.dataset.auto; TODO=TODO.filter(t=>t.key!==k); if(cb.checked) TODO.push({id:uid(),key:k,done:true,doneAt:TODAY()}); store(K_T,TODO); renderHome(); });
   box.querySelectorAll("[data-tid]").forEach(cb=>cb.onchange=()=>{ const t=TODO.find(x=>x.id===cb.dataset.tid); if(t){ t.done=cb.checked; t.doneAt=cb.checked?TODAY():""; store(K_T,TODO); renderHome(); } });
   box.querySelectorAll("[data-tdel]").forEach(b=>b.onclick=()=>{ TODO=TODO.filter(t=>t.id!==b.dataset.tdel); store(K_T,TODO); renderHome(); });
-  $("#tform").onsubmit=e=>{ e.preventDefault(); const v=$("#tin").value.trim(); if(!v) return; TODO.push({id:uid(),text:v,done:false,added:TODAY()}); store(K_T,TODO); renderHome(); };
+  bindTodoInput();
 }
 MM.renderHome=renderHome; MM.renderCust=renderCust;
 MM.renderListings=renderListings; MM.renderContracts=renderContracts;
-MM._work={analyzeCall,relDates,parseListing,splitBlocks,parseContract,toMan,korNum,events,get LIST(){return LIST},get CONS(){return CONS}};
+MM._work={parseTodos,analyzeCall,relDates,parseListing,splitBlocks,parseContract,toMan,korNum,events,get LIST(){return LIST},get CONS(){return CONS}};
 })();

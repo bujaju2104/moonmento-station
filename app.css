@@ -225,3 +225,10 @@ label.btn{cursor:pointer}
 .appt input[type=checkbox]{width:20px;height:20px;accent-color:var(--pine)}
 .appt small{grid-column:2/-1;color:var(--muted);font-size:12px}
 @media (max-width:480px){.appt{grid-template-columns:22px 1fr 1fr}.appt .at{grid-column:2/-1}}
+
+.bimg{display:flex;justify-content:center;background:var(--soft);border-radius:var(--r);padding:12px}
+.bimg img{width:100%;max-width:380px;height:auto;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+.tin2 textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;font-size:15px;resize:vertical}
+.tin2 .btns{margin-top:8px}
+.btn.rec{background:var(--red);color:#fff;border-color:var(--red);animation:recp 1.2s infinite}
+@keyframes recp{50%{opacity:.7}}

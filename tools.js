@@ -137,11 +137,94 @@ async function runBrief(v,silent){
     `\n국토교통부 실거래가 기준(${(d.asOf||"").replace(/-/g,".")} 자료)이고, 신고 시차로 최근 거래가 더 있을 수 있어요. 궁금하신 점 편하게 물어봐 주세요.\n\n문멘토프라퍼티 010.6336.1828 · 010.4336.5038`;
   const prompt=`너는 공인중개사가 손님에게 보내는 시세 브리핑을 다듬는 보조야. 아래 실거래 정리를 바탕으로 ${v.purpose} 손님에게 보낼 카톡 메시지를 다정하고 짧게 다듬어 줘. 숫자는 바꾸지 말고, 자료에 없는 전망·호재는 쓰지 마.\n\n${text}`;
   const others=cands.length>1?`<p class="note" style="margin:0">같은 이름 단지가 더 있어요: ${cands.slice(1).map(x=>`${esc(x.n)}(${esc(x.g)} ${esc(x.d)})`).join(", ")}. 다른 단지면 이름을 더 정확히 넣어 주세요.</p>`:"";
-  $("#out").innerHTML=`<div class="out"><h3>${esc(a.n)} · ${esc(a.g)} ${esc(a.d)} · 전용 ${key}㎡</h3>${others}<pre>${esc(text)}</pre><div class="btns"><button type="button" class="btn pri" data-copy>브리핑 복사</button></div></div>`+outBox("AI로 다듬기 (선택)",prompt);
+  const defMode=/매도/.test(v.purpose)?"sell":"buy";
+  $("#out").innerHTML=`<div class="out"><h3>${esc(a.n)} · ${esc(a.g)} ${esc(a.d)} · 전용 ${key}㎡</h3>${others}<pre>${esc(text)}</pre><div class="btns"><button type="button" class="btn pri" data-copy>브리핑 복사</button></div></div>
+    <div class="out"><h3>손님용 브리핑 이미지</h3><p class="note" style="margin:0">카톡으로 바로 보낼 수 있는 4:5 이미지예요. 매수 손님에겐 지금 가격이 최고가 대비 어느 수준인지, 매도 손님에겐 최근 거래와 최고가를 앞에 보여줘요.</p>
+      <div class="chips" role="group" aria-label="이미지 종류"><button type="button" class="chip ${defMode==="buy"?"on":""}" data-bimg="buy">매수 손님용</button><button type="button" class="chip ${defMode==="sell"?"on":""}" data-bimg="sell">매도 손님용</button></div>
+      <div class="bimg"><img id="bimg" alt="실거래 브리핑 이미지 미리보기"></div>
+      <div class="btns"><a class="btn pri" id="bsave" download>이미지 저장</a><button type="button" class="btn" id="bshare">카톡 등으로 공유</button></div></div>`+outBox("AI로 다듬기 (선택)",prompt);
   bindCopy([text,prompt]);
+  const ctx={a,key,S,near,nm:v.client||"",asOf:d.asOf,d};
+  const paint=async mode=>{ document.querySelectorAll("[data-bimg]").forEach(b=>b.classList.toggle("on",b.dataset.bimg===mode));
+    const cv=await briefImage(mode,ctx); const url=cv.toDataURL("image/png"); $("#bimg").src=url;
+    const fn=`${a.n}_${key}㎡_${mode==="buy"?"매수":"매도"}브리핑.png`; $("#bsave").href=url; $("#bsave").download=fn;
+    $("#bshare").onclick=()=>cv.toBlob(async bl=>{ const f=new File([bl],fn,{type:"image/png"}); if(navigator.canShare&&navigator.canShare({files:[f]})){ try{ await navigator.share({files:[f],title:`${a.n} 실거래 브리핑`}); }catch(e){} } else toast("이 기기는 바로 공유가 안 돼요. 이미지 저장 후 보내 주세요"); }); };
+  document.querySelectorAll("[data-bimg]").forEach(b=>b.onclick=()=>paint(b.dataset.bimg));
+  paint(defMode);
   if(!silent) $("#out").scrollIntoView({behavior:"smooth",block:"start"});
 }
 
+
+/* ---------- 손님용 브리핑 이미지 (캔버스 1080×1350) ---------- */
+async function briefImage(mode,{a,key,S,near,nm,asOf,d}){
+  try{ await Promise.all(["700 40px 'IBM Plex Sans KR'","500 40px 'IBM Plex Sans KR'","500 40px 'IBM Plex Mono'"].map(f=>document.fonts.load(f))); }catch(e){}
+  const W=1080,H=1350,P=72, cv=document.createElement("canvas"); cv.width=W; cv.height=H; const g=cv.getContext("2d");
+  const F=(w,px,mono)=>`${w} ${px}px ${mono?"'IBM Plex Mono',":""}'IBM Plex Sans KR',sans-serif`;
+  const C={ink:"#15201b",muted:"#5b6a63",faint:"#8a9690",line:"#dbe3df",soft:"#f4f7f5",pine:"#1d5c47",pineSoft:"#e1eee8",gold:"#a5761a",goldSoft:"#f6ecd6",red:"#b3372e"};
+  const acc=mode==="buy"?C.pine:C.gold, accSoft=mode==="buy"?C.pineSoft:C.goldSoft;
+  const T=S.T, last=S.last, high=S.high; let low=T[0]; T.forEach(t=>{ if(t[1]<low[1]) low=t; });
+  const toD=n=>{ const s=String(n); return new Date(+s.slice(0,4),+s.slice(4,6)-1,+s.slice(6,8)); };
+  const cut=toD(last[0]); cut.setDate(cut.getDate()-90);
+  const r3=T.filter(t=>toD(t[0])>=cut); const avg3=r3.length?Math.round(r3.reduce((x,t)=>x+t[1],0)/r3.length):0;
+  const gap=high[1]?((last[1]-high[1])/high[1]*100):0;
+  const won=d.won, ws=d.wonShort, ymd=d.ymd;
+  const rr=(x,y,w,h,r,fill)=>{ g.beginPath(); g.roundRect(x,y,w,h,r); g.fillStyle=fill; g.fill(); };
+  const fit=(txt,font,max)=>{ let px=parseInt(font.match(/(\d+)px/)[1]); g.font=font; while(g.measureText(txt).width>max&&px>24){ px-=2; g.font=font.replace(/\d+px/,px+"px"); } return g.font; };
+  g.fillStyle="#fff"; g.fillRect(0,0,W,H); g.fillStyle=acc; g.fillRect(0,0,W,14);
+  // 머리
+  g.textBaseline="alphabetic"; g.fillStyle=acc; g.font=F(700,30); g.fillText("실거래 시세 브리핑",P,96);
+  const badge=mode==="buy"?"매수 검토용":"매도 검토용"; g.font=F(700,28); const bw=g.measureText(badge).width+44; rr(W-P-bw,62,bw,50,25,accSoft); g.fillStyle=acc; g.fillText(badge,W-P-bw+22,97);
+  let y=150; if(nm){ g.fillStyle=C.muted; g.font=F(500,32); g.fillText(`${nm.replace(/님?$/,"")}님께 드리는 자료`,P,y); y+=16; }
+  g.fillStyle=C.ink; g.font=fit(a.n,F(700,68),W-2*P); g.fillText(a.n,P,y+70); y+=70;
+  g.fillStyle=C.muted; g.font=F(500,32); g.fillText(`${a.g} ${a.d} · 전용 ${key}㎡`,P,y+50); y+=50;
+  // 큰 숫자
+  y+=36; rr(P,y,W-2*P,200,24,accSoft);
+  const big=mode==="buy"?["최근 실거래가",last]:["최근 1년 최고가",high];
+  g.fillStyle=acc; g.font=F(700,30); g.fillText(big[0],P+40,y+60);
+  g.fillStyle=C.ink; g.font=fit(won(big[1][1]),F(700,84,true),W-2*P-80); g.fillText(won(big[1][1]),P+40,y+150);
+  g.fillStyle=C.muted; g.font=F(500,28); const sub=`${ymd(big[1][0])} · ${big[1][3]}층`; g.fillText(sub,W-P-40-g.measureText(sub).width,y+60);
+  y+=200;
+  // 3칸
+  y+=28; const boxes=mode==="buy"
+    ?[["1년 최고가",ws(high[1]),ymd(high[0]).slice(2)],["최고가 대비",(gap>0?"+":"")+gap.toFixed(1)+"%",gap<0?"최근 거래가 더 낮음":gap>0?"최근 거래가 신고가":"최고가와 같음"],["최근 3개월 평균",avg3?ws(avg3):"거래 없음",`${r3.length}건 기준`]]
+    :[["최근 실거래",ws(last[1]),ymd(last[0]).slice(2)+" · "+last[3]+"층"],["최근 3개월 평균",avg3?ws(avg3):"거래 없음",`${r3.length}건 기준`],["1년 거래",S.n+"건",`최저 ${ws(low[1])}`]];
+  const bw3=(W-2*P-2*20)/3;
+  boxes.forEach((b,i)=>{ const x=P+i*(bw3+20); g.strokeStyle=C.line; g.lineWidth=2; g.beginPath(); g.roundRect(x,y,bw3,150,18); g.stroke();
+    g.fillStyle=C.muted; g.font=F(500,26); g.fillText(b[0],x+24,y+44);
+    g.fillStyle=i===1&&mode==="buy"?(gap<0?C.pine:C.red):C.ink; g.font=fit(b[1],F(700,44,true),bw3-48); g.fillText(b[1],x+24,y+100);
+    g.fillStyle=C.faint; g.font=fit(b[2],F(500,22),bw3-48); g.fillText(b[2],x+24,y+134); });
+  y+=150;
+  // 그래프
+  y+=40; g.fillStyle=C.ink; g.font=F(700,30); g.fillText(`전용 ${key}㎡ 실거래 흐름 (최근 1년)`,P,y); y+=24;
+  const cx=P+70, cw=W-2*P-90, cy=y+10, ch=260;
+  const xs=T.map(t=>toD(t[0]).getTime()), x0=Math.min(...xs), x1=Math.max(...xs)||x0+1;
+  let lo=Math.min(...T.map(t=>t[1])), hi=Math.max(...T.map(t=>t[1])); const pad=Math.max((hi-lo)*0.15,hi*0.03); lo-=pad; hi+=pad;
+  const X=t=>cx+(x1===x0?cw/2:(toD(t[0]).getTime()-x0)/(x1-x0)*cw), Y=v=>cy+ch-(v-lo)/(hi-lo)*ch;
+  g.strokeStyle=C.line; g.lineWidth=1.5; g.fillStyle=C.faint; g.font=F(500,22,true); g.textAlign="right";
+  for(let i=0;i<=3;i++){ const v=lo+(hi-lo)*i/3, yy=Y(v); g.beginPath(); g.moveTo(cx,yy); g.lineTo(cx+cw,yy); g.stroke(); g.fillText(ws(Math.round(v)),cx-12,yy+8); }
+  g.textAlign="center"; const ym=n=>{ const s=String(n); return `${s.slice(2,4)}.${s.slice(4,6)}`; };
+  [T[0],T[Math.floor(T.length/2)],last].forEach((t,i)=>{ if(i===1&&T.length<5) return; g.fillText(ym(t[0]),X(t),cy+ch+36); });
+  g.textAlign="left";
+  g.strokeStyle=acc; g.lineWidth=4; g.lineJoin="round"; g.beginPath(); T.forEach((t,i)=>i?g.lineTo(X(t),Y(t[1])):g.moveTo(X(t),Y(t[1]))); g.globalAlpha=.35; g.stroke(); g.globalAlpha=1;
+  T.forEach(t=>{ g.beginPath(); g.arc(X(t),Y(t[1]),7,0,7); g.fillStyle=acc; g.fill(); });
+  const mark=(t,label,col)=>{ const px=X(t),py=Y(t[1]); g.beginPath(); g.arc(px,py,13,0,7); g.fillStyle="#fff"; g.fill(); g.lineWidth=5; g.strokeStyle=col; g.stroke();
+    g.font=F(700,24); const tw=g.measureText(label).width+24; let lx=Math.min(Math.max(px-tw/2,cx),cx+cw-tw), ly=py-58; if(ly<cy-20) ly=py+24; rr(lx,ly,tw,40,10,col); g.fillStyle="#fff"; g.fillText(label,lx+12,ly+29); };
+  if(high!==last) mark(high,"최고 "+ws(high[1]),C.gold);
+  mark(last,"최근 "+ws(last[1]),C.pine);
+  y=cy+ch+100;
+  // 한 줄 요약
+  const lines=[];
+  if(mode==="buy"){ lines.push(gap<0?`최근 거래가 1년 최고가보다 ${Math.abs(gap).toFixed(1)}% 낮은 수준이에요`:gap>0?`최근 거래가 1년 최고가를 새로 썼어요`:`최근 거래가 1년 최고가와 같아요`); }
+  else { lines.push(`최근 3개월 ${r3.length}건 거래${avg3?`, 평균 ${won(avg3)}`:""}이에요`); }
+  if(near&&near.length) lines.push(`${near.map(x=>`${x.s.name}역 약 ${Math.round(x.d/10)*10}m`).join(" · ")} (직선거리)`);
+  g.font=F(500,30); lines.forEach((l,i)=>{ g.fillStyle=i?C.muted:C.ink; g.font=i?F(500,26):F(700,30); g.fillText((i?"":"✔ ")+l,P,y+i*44); });
+  // 바닥
+  g.fillStyle=C.soft; g.fillRect(0,H-150,W,150);
+  g.fillStyle=C.faint; g.font=F(500,22); g.fillText(`국토교통부 아파트 매매 실거래가 기준 · ${(asOf||"").replace(/-/g,".")} 자료 · 신고 시차로 최근 거래가 늘 수 있어요`,P,H-102);
+  g.fillStyle=C.ink; g.font=F(700,32); g.fillText("문멘토프라퍼티",P,H-50);
+  g.font=F(500,30,true); const tel="010.6336.1828 · 010.4336.5038"; g.fillText(tel,W-P-g.measureText(tel).width,H-50);
+  return cv;
+}
 /* ---------- 계약 일정 ---------- */
 const SF=[["contract","계약일","date"],["middle","중도금일","date"],["balance","잔금일","date"],["th","토지거래허가구역","sel",["해당 (허가 받은 뒤 계약)","해당 없음"]],["thApply","토허 신청일 (해당 시)","date"],["loan","주택담보대출","sel",["받음","안 받음"]]];
 const loc=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
