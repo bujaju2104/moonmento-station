@@ -61,7 +61,8 @@ const TOOLS=[
   f:[["case","상황","sel",["가격을 더 깎아 달라","중개보수 할인해 달라","다른 부동산이 더 싸다","지금 사도 되나요, 더 떨어지지 않나요","재개발 지금 들어가도 되나요","생각해 보고 연락 줄게요"]],["detail","매물·손님 상황","area","예: 신당동 84㎡ 15억, 30대 맞벌이 첫 집"],["level","손님 난이도","sel",["보통","까다로움","아주 까다로움"]]],
   build:v=>`우리 롤플레이를 하자. 너는 부동산 사무실을 찾은 손님이고, 나는 공인중개사야.\n\n[상황] 손님이 "${v.case}"라고 말하는 장면\n[매물·손님 정보] ${v.detail||"(자유롭게 설정)"}\n[손님 난이도] ${v.level}\n\n[규칙]\n- 한 번에 손님 대사 한두 문장만 말하고 내 대답을 기다려\n- 내 대답이 설득력 있으면 조금씩 마음을 열고, 아니면 더 반박해\n- 내가 "끝"이라고 하면 역할에서 나와서 피드백을 줘: 잘한 점 2개, 고칠 점 2개, 더 좋은 답변 예시 1개\n- 법·세금 관련 내 답변이 틀렸으면 피드백에서 꼭 짚어 줘\n\n손님 첫 대사로 시작해 줘.`},
  {id:"brief",name:"손님용 시세 브리핑",tag:"4주차",desc:"단지를 고르면 앱이 실거래로 브리핑 문안을 바로 만들어요. AI로 다듬는 지시문도 함께 나와요.",
-  f:[["apt","단지 이름","text","예: 남산타운 (지도 자료에 있는 단지)"],["area","전용면적 (㎡, 숫자)","text","예: 59"],["client","손님 이름","text","예: 김OO님"],["purpose","손님 목적","sel",["실거주 매수","투자","매도 상담","갈아타기"]]],
+  f:[["apt","단지 이름","text","예: 남산타운 (지도 자료에 있는 단지)"],["area","전용면적 (㎡, 숫자)","text","예: 59"],["client","손님 이름","text","예: 김OO님"],["purpose","손님 목적","sel",["실거주 매수","투자","매도 상담","갈아타기"]],
+   ["dongho","동·호수 (매도)","text","예: 105동 1203호"],["floor","층 (매도)","text","예: 12"],["ask","현재 매도희망가 = 현재 광고가 (매도)","text","예: 18억5천"],["first","최초 광고가 (매도)","text","예: 19억 2천"],["base","기준일 (매도)","date"]],
   auto:true},
  {id:"special",name:"특약 초안 (검토용)",tag:"3주차",desc:"계약 조건을 넣으면 특약 초안과 빠진 확인사항을 뽑게 해요. 반드시 중개사가 검토하고 고쳐서 써야 해요.",
   f:[["kind","계약 종류","sel",["아파트 매매","아파트 매매 (토지거래허가구역)","재개발 지분 매매","전세","월세"]],["cond","합의한 조건","area","예: 잔금 시 임차인 퇴거, 기본 옵션 에어컨 2대 포함, 누수 발견 시 매도인 수리"],["risk","걱정되는 부분","area","예: 매수인 대출 미승인, 토허 불허가"]],
@@ -90,6 +91,7 @@ function renderTools(){
   box.querySelector(".back").onclick=()=>{ curTool=null; renderTools(); };
   $("#clr").onclick=()=>{ delete saved[t.id]; keep(); renderTools(); };
   $("#go").onclick=()=>run(t);
+  if(t.id==="brief"){ const SF=["dongho","floor","ask","first","base"]; const tg=()=>{ const sell=/매도/.test($("#f_purpose").value); SF.forEach(k=>{ const el=$("#f_"+k); if(el) el.closest(".field").hidden=!sell; }); }; $("#f_purpose").addEventListener("change",tg); tg(); if(!$("#f_base").value) $("#f_base").value=new Date(Date.now()+9*36e5).toISOString().slice(0,10); }
   if(t.id==="ad") t.f.forEach(f=>{ const el=$("#f_"+f[0]); if(el) el.addEventListener("input",()=>adCheck(t)); });
   if(Object.keys(v0).length) run(t,true);
 }
@@ -127,26 +129,37 @@ async function runBrief(v,silent){
   const S=d.summary(a,key);
   const q=d.pos(a); const near=q?d.nearest(q,2):[];
   const recent=[...S.T].slice(-3).reverse();
-  const nm=v.client||"손님";
-  const text=`${nm}, 요청하신 ${a.g} ${a.d} ${a.n} 전용 ${key}㎡ 실거래 정리해 드려요.\n\n`+
+  const nm=v.client?v.client.trim().replace(/님?$/,"님"):"손님";
+  let text=`${nm}, 요청하신 ${a.g} ${a.d} ${a.n} 전용 ${key}㎡ 실거래 정리해 드려요.\n\n`+
     `■ 최근 거래: ${d.won(S.last[1])} (${d.ymd(S.last[0])}, ${S.last[3]}층)\n`+
     `■ 최근 1년 최고가: ${d.won(S.high[1])} (${d.ymd(S.high[0])}, ${S.high[3]}층)\n`+
     `■ 최근 1년 거래: ${S.n}건\n`+
     `■ 최근 3건: ${recent.map(t=>`${d.ymd(t[0]).slice(2)} ${d.won(t[1])}(${t[3]}층)`).join(" / ")}\n`+
     (near.length?`■ 교통: ${near.map(x=>`${x.s.name}역 약 ${Math.round(x.d/10)*10}m`).join(", ")} (직선거리)\n`:"")+
     `\n국토교통부 실거래가 기준(${(d.asOf||"").replace(/-/g,".")} 자료)이고, 신고 시차로 최근 거래가 더 있을 수 있어요. 궁금하신 점 편하게 물어봐 주세요.\n\n문멘토프라퍼티 010.6336.1828 · 010.4336.5038`;
+  if(/매도/.test(v.purpose)){ const sx=sellStats({a,key,S,d}); const tm=MM._work&&MM._work.toMan; const ask=tm?tm(v.ask):0, first=tm?tm(v.first):0;
+    const df=x=>x?`${diffTxt(ask-x,x)}`:"";
+    text=`${nm}, ${a.n}${v.dongho?" "+v.dongho:""} 매도 가격 점검 자료예요. (기준일 ${(v.base||"").replace(/-/g,".")})\n\n`+
+      `■ 매물: ${a.g} ${a.d} ${a.n}${v.dongho?" "+v.dongho:""} · 전용 ${key}㎡${v.floor?" · "+v.floor.replace(/층/g,"")+"층":""}\n`+
+      (ask?`■ 현재 매도희망가(광고가): ${d.won(ask)}\n`:"")+(first?`■ 최초 광고가: ${d.won(first)}${ask?` → 조정 ${diffTxt(ask-first,first)}`:""}\n`:"")+
+      `■ 같은 면적 최근 실거래: ${d.won(S.last[1])} (${d.ymd(S.last[0])}, ${S.last[3]}층)${ask?` · 희망가와 차이 ${df(S.last[1])}`:""}\n`+
+      (sx.avg3?`■ 최근 3개월 평균: ${d.won(sx.avg3)} (${sx.r3.length}건)${ask?` · 희망가와 차이 ${df(sx.avg3)}`:""}\n`:"")+
+      `■ 1년 최고가: ${d.won(S.high[1])} (${d.ymd(S.high[0])}, ${S.high[3]}층)${ask?` · 희망가와 차이 ${df(S.high[1])}`:""}\n`+
+      (sx.others.length?`■ 다른 평형 최근 실거래: ${sx.others.map(o=>`${o.k}㎡ ${d.won(o.last[1])}(${d.ymd(o.last[0]).slice(2)})`).join(" / ")}\n`:"")+
+      `\n국토교통부 실거래가 기준(${(d.asOf||"").replace(/-/g,".")} 자료)이고, 신고 시차로 최근 거래가 더 있을 수 있어요.\n\n문멘토프라퍼티 010.6336.1828 · 010.4336.5038`; }
   const prompt=`너는 공인중개사가 손님에게 보내는 시세 브리핑을 다듬는 보조야. 아래 실거래 정리를 바탕으로 ${v.purpose} 손님에게 보낼 카톡 메시지를 다정하고 짧게 다듬어 줘. 숫자는 바꾸지 말고, 자료에 없는 전망·호재는 쓰지 마.\n\n${text}`;
   const others=cands.length>1?`<p class="note" style="margin:0">같은 이름 단지가 더 있어요: ${cands.slice(1).map(x=>`${esc(x.n)}(${esc(x.g)} ${esc(x.d)})`).join(", ")}. 다른 단지면 이름을 더 정확히 넣어 주세요.</p>`:"";
   const defMode=/매도/.test(v.purpose)?"sell":"buy";
   $("#out").innerHTML=`<div class="out"><h3>${esc(a.n)} · ${esc(a.g)} ${esc(a.d)} · 전용 ${key}㎡</h3>${others}<pre>${esc(text)}</pre><div class="btns"><button type="button" class="btn pri" data-copy>브리핑 복사</button></div></div>
     <div class="out"><h3>손님용 브리핑 이미지</h3><p class="note" style="margin:0">카톡으로 바로 보낼 수 있는 4:5 이미지예요. 매수 손님에겐 지금 가격이 최고가 대비 어느 수준인지, 매도 손님에겐 최근 거래와 최고가를 앞에 보여줘요.</p>
-      <div class="chips" role="group" aria-label="이미지 종류"><button type="button" class="chip ${defMode==="buy"?"on":""}" data-bimg="buy">매수 손님용</button><button type="button" class="chip ${defMode==="sell"?"on":""}" data-bimg="sell">매도 손님용</button></div>
+      <div class="chips" role="group" aria-label="이미지 종류"><button type="button" class="chip ${defMode==="buy"?"on":""}" data-bimg="buy">매수 손님용</button><button type="button" class="chip ${defMode==="sell"?"on":""}" data-bimg="sell">매도 손님용 (가격 점검표)</button></div>
       <div class="bimg"><img id="bimg" alt="실거래 브리핑 이미지 미리보기"></div>
       <div class="btns"><a class="btn pri" id="bsave" download>이미지 저장</a><button type="button" class="btn" id="bshare">카톡 등으로 공유</button></div></div>`+outBox("AI로 다듬기 (선택)",prompt);
   bindCopy([text,prompt]);
-  const ctx={a,key,S,near,nm:v.client||"",asOf:d.asOf,d};
+  const tm=MM._work&&MM._work.toMan;
+  const ctx={a,key,S,near,nm:v.client||"",asOf:d.asOf,d,dongho:v.dongho||"",floor:(v.floor||"").replace(/층/g,""),ask:tm?tm(v.ask):0,first:tm?tm(v.first):0,base:v.base||""};
   const paint=async mode=>{ document.querySelectorAll("[data-bimg]").forEach(b=>b.classList.toggle("on",b.dataset.bimg===mode));
-    const cv=await briefImage(mode,ctx); const url=cv.toDataURL("image/png"); $("#bimg").src=url;
+    const cv=mode==="sell"?await sellImage(ctx):await briefImage(mode,ctx); const url=cv.toDataURL("image/png"); $("#bimg").src=url;
     const fn=`${a.n}_${key}㎡_${mode==="buy"?"매수":"매도"}브리핑.png`; $("#bsave").href=url; $("#bsave").download=fn;
     $("#bshare").onclick=()=>cv.toBlob(async bl=>{ const f=new File([bl],fn,{type:"image/png"}); if(navigator.canShare&&navigator.canShare({files:[f]})){ try{ await navigator.share({files:[f],title:`${a.n} 실거래 브리핑`}); }catch(e){} } else toast("이 기기는 바로 공유가 안 돼요. 이미지 저장 후 보내 주세요"); }); };
   document.querySelectorAll("[data-bimg]").forEach(b=>b.onclick=()=>paint(b.dataset.bimg));
@@ -155,6 +168,76 @@ async function runBrief(v,silent){
 }
 
 
+
+/* ---------- 매도 손님용 가격 점검표 ---------- */
+function diffTxt(dm,baseV){ if(!dm) return "같음"; const a=Math.abs(dm); const amt=a>=10000?MM.data.wonShort(a):a.toLocaleString()+"만"; return `${dm>0?"+":"−"}${amt}${baseV?` (${dm>0?"+":"−"}${(a/baseV*100).toFixed(1)}%)`:""}`; }
+function sellStats({a,key,S,d}){
+  const toD=n=>{ const s=String(n); return new Date(+s.slice(0,4),+s.slice(4,6)-1,+s.slice(6,8)); };
+  const cut=toD(S.last[0]); cut.setDate(cut.getDate()-90);
+  const r3=S.T.filter(t=>toD(t[0])>=cut); const avg3=r3.length?Math.round(r3.reduce((x,t)=>x+t[1],0)/r3.length):0;
+  const others=d.areas(a).filter(([k])=>k!==key).map(([k,n])=>({k,n,last:d.summary(a,k).last})).sort((x,y)=>Math.abs(x.k-key)-Math.abs(y.k-key)).slice(0,4).sort((x,y)=>x.k-y.k);
+  return {r3,avg3,others,toD};
+}
+async function sellImage(ctx){
+  const {a,key,S,near,nm,asOf,d,dongho,floor,ask,first,base}=ctx;
+  try{ await Promise.all(["700 40px 'IBM Plex Sans KR'","500 40px 'IBM Plex Sans KR'","500 40px 'IBM Plex Mono'"].map(f=>document.fonts.load(f))); }catch(e){}
+  const W=1080,P=72, cv=document.createElement("canvas"); cv.width=W; cv.height=2400; const g=cv.getContext("2d");
+  const F=(w,px,mono)=>`${w} ${px}px ${mono?"'IBM Plex Mono',":""}'IBM Plex Sans KR',sans-serif`;
+  const C={ink:"#15201b",muted:"#5b6a63",faint:"#8a9690",line:"#dbe3df",soft:"#f4f7f5",pine:"#1d5c47",gold:"#a5761a",goldSoft:"#f6ecd6",red:"#b3372e"};
+  const won=d.won, ws=d.wonShort, ymd=d.ymd; const {r3,avg3,others,toD}=sellStats({a,key,S,d});
+  const rr=(x,y,w,h,r,fill)=>{ g.beginPath(); g.roundRect(x,y,w,h,r); g.fillStyle=fill; g.fill(); };
+  const fit=(txt,font,max)=>{ let px=parseInt(font.match(/(\d+)px/)[1]); g.font=font; while(g.measureText(txt).width>max&&px>20){ px-=2; g.font=font.replace(/\d+px/,px+"px"); } return g.font; };
+  const right=(txt,x,y)=>g.fillText(txt,x-g.measureText(txt).width,y);
+  const dcol=dm=>dm>0?C.red:dm<0?C.pine:C.muted;
+  g.fillStyle="#fff"; g.fillRect(0,0,W,2400); g.fillStyle=C.gold; g.fillRect(0,0,W,14);
+  g.fillStyle=C.gold; g.font=F(700,30); g.fillText("매도 가격 점검표",P,96);
+  const bd=`기준일 ${(base||new Date().toISOString().slice(0,10)).replace(/-/g,".")}`; g.font=F(700,26); const bw=g.measureText(bd).width+40; rr(W-P-bw,62,bw,50,25,C.goldSoft); g.fillStyle=C.gold; g.fillText(bd,W-P-bw+20,96);
+  let y=150; if(nm){ g.fillStyle=C.muted; g.font=F(500,32); g.fillText(`${nm.replace(/님?$/,"")}님 매물`,P,y); y+=16; }
+  g.fillStyle=C.ink; g.font=fit(a.n,F(700,66),W-2*P); g.fillText(a.n,P,y+68); y+=68;
+  g.fillStyle=C.muted; g.font=fit("x",F(500,32),9999); const subl=[`${a.g} ${a.d}`,dongho,`전용 ${key}㎡`,floor?floor+"층":""].filter(Boolean).join(" · "); g.font=fit(subl,F(500,32),W-2*P); g.fillText(subl,P,y+50); y+=50;
+  // 희망가 박스
+  y+=36; const boxH=first?250:200; rr(P,y,W-2*P,boxH,24,C.goldSoft);
+  g.fillStyle=C.gold; g.font=F(700,30); g.fillText("현재 매도희망가 (현재 광고가)",P+40,y+60);
+  g.fillStyle=C.ink; g.font=fit(ask?won(ask):"입력 안 함",F(700,80,true),W-2*P-80); g.fillText(ask?won(ask):"입력 안 함",P+40,y+150);
+  if(first){ g.font=F(500,28); g.fillStyle=C.muted; g.fillText(`최초 광고가 ${won(first)}`,P+40,y+212);
+    if(ask){ const t=`→ 지금까지 ${diffTxt(ask-first,first)} 조정`; g.font=F(700,28); g.fillStyle=dcol(ask-first); right(t,W-P-40,y+212); } }
+  y+=boxH;
+  // 같은 면적 비교표
+  y+=56; g.fillStyle=C.ink; g.font=F(700,32); g.fillText(`같은 면적(전용 ${key}㎡) 실거래와 비교`,P,y); y+=24;
+  const rows=[["최근 실거래",S.last[1],`${ymd(S.last[0]).slice(2)} · ${S.last[3]}층`],["최근 3개월 평균",avg3,`${r3.length}건 평균`],["1년 최고가",S.high[1],`${ymd(S.high[0]).slice(2)} · ${S.high[3]}층`]].filter(r=>r[1]);
+  const c1=P+24, c2=P+330, c3=W-P-24; g.fillStyle=C.soft; g.fillRect(P,y,W-2*P,52); g.fillStyle=C.muted; g.font=F(700,24); g.fillText("구분",c1,y+35); g.fillText("실거래가",c2,y+35); right(ask?"희망가와 차이":"",c3,y+35); y+=52;
+  rows.forEach(r=>{ g.fillStyle=C.ink; g.font=F(700,30); g.fillText(r[0],c1,y+46); g.fillStyle=C.faint; g.font=F(500,22); g.fillText(r[2],c1,y+76);
+    g.fillStyle=C.ink; g.font=F(700,34,true); g.fillText(ws(r[1]),c2,y+56);
+    if(ask){ const dm=ask-r[1]; g.fillStyle=dcol(dm); g.font=F(700,30,true); right(diffTxt(dm,r[1]),c3,y+56); }
+    y+=96; g.strokeStyle=C.line; g.lineWidth=2; g.beginPath(); g.moveTo(P,y); g.lineTo(W-P,y); g.stroke(); });
+  if(ask){ y+=36; g.font=F(500,22); g.fillStyle=C.faint; g.fillText("희망가가 실거래보다 높으면 빨간색, 낮으면 초록색이에요.",P,y); }
+  // 그래프
+  y+=56; g.fillStyle=C.ink; g.font=F(700,30); g.fillText("최근 1년 실거래 흐름과 희망가",P,y); y+=30;
+  const T=S.T, cx=P+70, cw=W-2*P-90, cy=y+10, ch=240;
+  const xs=T.map(t=>toD(t[0]).getTime()), x0=Math.min(...xs), x1=Math.max(...xs);
+  const vals=T.map(t=>t[1]).concat([ask,first].filter(Boolean)); let lo=Math.min(...vals), hi=Math.max(...vals); const pad=Math.max((hi-lo)*0.12,hi*0.03); lo-=pad; hi+=pad;
+  const X=t=>cx+(x1===x0?cw/2:(toD(t[0]).getTime()-x0)/(x1-x0)*cw), Y=v=>cy+ch-(v-lo)/(hi-lo)*ch;
+  g.strokeStyle=C.line; g.lineWidth=1.5; g.fillStyle=C.faint; g.font=F(500,22,true); g.textAlign="right";
+  for(let i=0;i<=3;i++){ const v=lo+(hi-lo)*i/3, yy=Y(v); g.beginPath(); g.moveTo(cx,yy); g.lineTo(cx+cw,yy); g.stroke(); g.fillText(ws(Math.round(v)),cx-12,yy+8); }
+  g.textAlign="center"; const ym=n=>{ const s=String(n); return `${s.slice(2,4)}.${s.slice(4,6)}`; }; [T[0],T[T.length-1]].forEach(t=>g.fillText(ym(t[0]),X(t),cy+ch+36)); g.textAlign="left";
+  const hline=(v,col,label)=>{ const yy=Y(v); g.setLineDash([12,10]); g.strokeStyle=col; g.lineWidth=3; g.beginPath(); g.moveTo(cx,yy); g.lineTo(cx+cw,yy); g.stroke(); g.setLineDash([]); g.font=F(700,22); const tw=g.measureText(label).width+20; rr(cx+cw-tw,yy-36,tw,32,8,col); g.fillStyle="#fff"; g.fillText(label,cx+cw-tw+10,yy-13); };
+  if(first&&first!==ask) hline(first,C.faint,"최초 광고가 "+ws(first));
+  if(ask) hline(ask,C.gold,"희망가 "+ws(ask));
+  g.strokeStyle=C.pine; g.globalAlpha=.35; g.lineWidth=4; g.beginPath(); T.forEach((t,i)=>i?g.lineTo(X(t),Y(t[1])):g.moveTo(X(t),Y(t[1]))); g.stroke(); g.globalAlpha=1;
+  T.forEach(t=>{ g.beginPath(); g.arc(X(t),Y(t[1]),7,0,7); g.fillStyle=C.pine; g.fill(); });
+  y=cy+ch+60;
+  // 다른 평형
+  y+=40; g.fillStyle=C.ink; g.font=F(700,30); g.fillText("같은 단지 다른 평형 최근 실거래",P,y); y+=20;
+  if(others.length){ others.forEach(o=>{ g.fillStyle=C.ink; g.font=F(700,28); g.fillText(`전용 ${o.k}㎡`,c1,y+46); g.font=F(700,30,true); g.fillText(ws(o.last[1]),c2,y+46);
+      g.fillStyle=C.faint; g.font=F(500,24); right(`${ymd(o.last[0]).slice(2)} · ${o.last[3]}층 · 1년 ${o.n}건`,c3,y+46); y+=68; g.strokeStyle=C.line; g.lineWidth=2; g.beginPath(); g.moveTo(P,y); g.lineTo(W-P,y); g.stroke(); }); }
+  else { g.fillStyle=C.muted; g.font=F(500,26); g.fillText("최근 1년 동안 다른 평형 거래가 없어요",P,y+44); y+=64; }
+  if(near&&near.length){ y+=48; g.fillStyle=C.muted; g.font=F(500,26); g.fillText(`${near.map(x=>`${x.s.name}역 약 ${Math.round(x.d/10)*10}m`).join(" · ")} (직선거리)`,P,y); }
+  // 바닥
+  y+=50; const H=y+150; g.fillStyle=C.soft; g.fillRect(0,y,W,150);
+  g.fillStyle=C.faint; g.font=F(500,22); g.fillText(`국토교통부 아파트 매매 실거래가 기준 · ${(asOf||"").replace(/-/g,".")} 자료 · 신고 시차로 최근 거래가 늘 수 있어요`,P,y+48);
+  g.fillStyle=C.ink; g.font=F(700,32); g.fillText("문멘토프라퍼티",P,y+100); g.font=F(500,30,true); right("010.6336.1828 · 010.4336.5038",W-P,y+100);
+  const out=document.createElement("canvas"); out.width=W; out.height=H; out.getContext("2d").drawImage(cv,0,0); return out;
+}
 /* ---------- 손님용 브리핑 이미지 (캔버스 1080×1350) ---------- */
 async function briefImage(mode,{a,key,S,near,nm,asOf,d}){
   try{ await Promise.all(["700 40px 'IBM Plex Sans KR'","500 40px 'IBM Plex Sans KR'","500 40px 'IBM Plex Mono'"].map(f=>document.fonts.load(f))); }catch(e){}
