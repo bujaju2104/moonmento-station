@@ -4,7 +4,8 @@
 
 - 지도: 카카오맵 JavaScript SDK (키는 카카오 개발자 사이트의 JavaScript SDK 도메인에 등록된 주소에서만 작동)
 - 지하철역·노선: © OpenStreetMap contributors, ODbL 1.0 (`data/subway.json`은 이 라이선스를 따름)
-- 실거래: 국토교통부 아파트 매매 실거래가 (`data/apts.json`, 2025.11~2026.10)
+- 실거래: **국토교통부 실거래가 직통 조회 (전국)**. 역·장소를 고르면 그 주변 시군구의 최근 12개월 아파트 매매를 `/api/rt`가 국토부에서 바로 받아 와요. 서버 인증키가 없거나 국토부가 응답하지 않으면 서울 고정 자료(`data/apts.json`, 2025.11~2026.10)로 보여 줘요.
+- 서울 밖: 지도를 옮기면 카카오 장소 검색(지하철역 분류)으로 그 지역 전철역을 찾아 표시하고, 검색창에서 역·아파트·동네 이름을 전국에서 찾아요.
 - 단지 위치: 일부는 자료에 포함, 나머지는 카카오 장소 검색으로 찾아 `data/geo.json`에 저장
 
 ## 단지 위치 한 번에 채우기
@@ -38,3 +39,21 @@ SheetJS xlsx 0.18.5 (cdnjs), pdf.js 3.11.174 (cdnjs), tesseract.js 5.1.1 + 한�
 
 ## AI 도구 · 손님용 시세 브리핑 이미지
 - 단지·면적을 넣으면 매수 손님용 / 매도 손님용 4:5(1080×1350) PNG를 바로 만들어 저장·공유.
+
+## 국토부 직통 실거래 (서버)
+- `GET /api/rt?code=시군구5자리[&months=12][&kind=분양권]` → 역세권 지도 형식 `{apts:[{n,g,d,t:[[계약일,금액(만원),전용×100,층]]}]}`. 같은 요청은 Vercel CDN이 6시간 재사용해요.
+- `POST /mcp` → Claude 사용자 지정 커넥터 「문멘토 실거래」 (문멘토 중개노트 앱과 Claude 대화에서 사용). 도구: `find_region`, `apt_trades`, `apt_trade_doc` (`kind: "분양권"` 지원).
+- 코드: `api/rt.js`, `api/mcp.js`, `lib/molit.js`(국토부 호출·해제 거래 제외·상세→일반 API 자동 전환), `lib/regions.js`(전국 250개 시군구)
+
+### Vercel 설정 (처음 한 번)
+Project → Settings → Environment Variables 에 추가하고 Redeploy:
+
+| 이름 | 값 |
+|---|---|
+| `MOLIT_SERVICE_KEY` | 공공데이터포털 인증키 (Encoding). "국토교통부_아파트 매매 실거래가 상세 자료"와 "국토교통부_아파트 분양권전매 실거래가 자료" 활용신청 필요 |
+| `ACCESS_TOKEN` | 커넥터 접속용 긴 임의 문자열 (없으면 `/mcp`를 아는 누구나 내 호출 한도를 쓸 수 있어요) |
+
+Claude 커넥터 주소: `https://moonmento-station.vercel.app/mcp?k=ACCESS_TOKEN값`
+
+### 시험
+`npm test` (국토부 응답을 흉내 낸 테스트, 인증키 불필요)

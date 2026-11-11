@@ -1,0 +1,7 @@
+{
+  "name": "moonmento-station",
+  "private": true,
+  "description": "문멘토 중개 AI: 카카오맵 역세권 지도 + 국토교통부 실거래 직통 조회",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test test/*.test.js" }
+}

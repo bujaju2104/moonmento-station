@@ -1,5 +1,7 @@
 /* 문멘토 역세권 지도
    - 카카오맵 위에 서울 지하철 노선·역을 그리고, 역을 누르면 반경 안 아파트를 가까운 순서로 보여줌
+   - 실거래는 /api/rt 로 국토교통부에서 시군구 단위로 바로 받음 (전국). 서버를 못 쓰면 서울 고정 자료(data/apts.json)
+   - 서울 밖은 카카오 장소 검색으로 전철역·장소를 찾아 같은 방식으로 반경 단지를 보여줌
    - 좌표가 없는 단지는 카카오 장소 검색으로 위치를 찾아 이 기기에 저장(다음부터 바로 표시) */
 (function(){
 "use strict";
@@ -10,7 +12,11 @@ const WALK = 80; // m/분
 const GEO_KEY = "mm-station-geo-v1";
 
 let SUB=null, APTS=[], GU=[], ASOF="";
-let map=null, ps=null, started=false, failed=false;
+let map=null, ps=null, geocoder=null, started=false, failed=false;
+/* 지역(시군구)별 실거래: code -> {state:"loading"|"live"|"fail", asOf, name, p:Promise} */
+const REG={}; let LIVE=false;
+const SEOUL_CODE={"종로구":"11110","중구":"11140","용산구":"11170","성동구":"11200","광진구":"11215","동대문구":"11230","중랑구":"11260","성북구":"11290","강북구":"11305","도봉구":"11320","노원구":"11350","은평구":"11380","서대문구":"11410","마포구":"11440","양천구":"11470","강서구":"11500","구로구":"11530","금천구":"11545","영등포구":"11560","동작구":"11590","관악구":"11620","서초구":"11650","강남구":"11680","송파구":"11710","강동구":"11740"};
+let EXTRA=[]; // 카카오에서 찾은 서울 밖 전철역 {name,lat,lng,lines:[],kakao:true}
 let radius=500, sel=null, selApt=null, sortBy="dist";
 let stOverlays=[], aptOverlays=[], circle=null, lineObjs={}, hiddenLines=new Set();
 let geoCache={};
@@ -36,7 +42,7 @@ function gusNear(p, m){
 
 /* ---------- 데이터 ---------- */
 const lineById = id => SUB.lines.find(l=>l.id===id) || {name:id,color:"#888"};
-const stColor = s => lineById(s.lines[0]).color;
+const stColor = s => s.lines.length?lineById(s.lines[0]).color:"#6b7a73";
 function aptKey(a){ return `${a.g}|${a.d}|${a.n}`; }
 function pos(a){ return a.p || (geoCache[aptKey(a)]||null); }
 function loadGeo(){ try{ geoCache=JSON.parse(localStorage.getItem(GEO_KEY)||"{}") }catch(e){ geoCache={} } }
@@ -61,10 +67,55 @@ async function loadData(){
     fetch("data/geo.json").then(r=>r.ok?r.json():{}).catch(()=>({}))
   ]);
   SUB=s; APTS=a.apts; GU=g; ASOF=(a.asOf||"").slice(0,10);
+  for(const x of APTS){ x.c=SEOUL_CODE[x.g]||""; x.stat=true; }
   loadGeo();
   for(const k in baked) if(!(k in geoCache)) geoCache[k]=baked[k];
-  $("#srcRt").textContent = `국토교통부 아파트 매매 실거래가 (2025.11~${ASOF.slice(0,7).replace("-",".")} 계약, ${ASOF.replace(/-/g,".")} 기준)`;
+  setSrc();
 }
+function setSrc(){
+  const live=Object.values(REG).filter(r=>r.state==="live");
+  const txt = live.length
+    ? `국토교통부 실거래가 직통 조회 (최근 12개월 계약, ${live.map(r=>r.asOf).sort().pop().replace(/-/g,".")} 기준, 해제 거래 제외)`
+    : `국토교통부 아파트 매매 실거래가 (서울, 2025.11~${ASOF.slice(0,7).replace("-",".")} 계약, ${ASOF.replace(/-/g,".")} 기준)`;
+  document.querySelectorAll('[id="srcRt"]').forEach(el=>el.textContent=txt); // 패널에도 같은 문구가 복사돼 있음
+}
+
+/* ---------- 지역별 실거래 (국토부 직통) ---------- */
+function loadRegion(code){
+  if(!/^\d{5}$/.test(code||"")) return Promise.resolve(false);
+  if(REG[code]) return REG[code].p;
+  const r=REG[code]={state:"loading"};
+  r.p=fetch(`/api/rt?code=${code}&months=12`).then(x=>x.ok?x.json():x.json().then(j=>Promise.reject(new Error(j.error||x.status)))).then(j=>{
+    const old=new Map(APTS.filter(a=>a.c===code).map(a=>[aptKey(a),a]));
+    APTS=APTS.filter(a=>a.c!==code);
+    for(const a of j.apts){ a.c=code; const o=old.get(aptKey(a)); if(o&&o.p) a.p=o.p; APTS.push(a); }
+    r.state="live"; r.asOf=j.asOf; r.name=j.name; LIVE=true; setSrc(); return true;
+  }).catch(e=>{ r.state="fail"; r.err=String(e.message||e); return false; });
+  return r.p;
+}
+/* 좌표 → 시군구 코드 (카카오 행정구역, 법정동 코드 앞 5자리) */
+function codeAt(lat,lng){
+  return new Promise(res=>{
+    if(!geocoder){ const g=guOf([lat,lng]); return res(g?SEOUL_CODE[g]:null); }
+    try{ geocoder.coord2RegionCode(lng,lat,(rs,st)=>{ const b=st===kakao.maps.services.Status.OK&&rs.find(x=>x.region_type==="B"); res(b?String(b.code).slice(0,5):null); }); }
+    catch(e){ res(null); }
+  });
+}
+async function codesNear(p, m){
+  const pts=[p]; const dLat=m/111000, dLng=m/(111000*Math.cos(p[0]*Math.PI/180));
+  for(const [a,b] of [[1,0],[-1,0],[0,1],[0,-1]]) pts.push([p[0]+a*dLat,p[1]+b*dLng]);
+  const out=new Set(); for(const q of pts){ const c=await codeAt(q[0],q[1]); if(c) out.add(c); }
+  return [...out];
+}
+async function ensureNear(p, m){
+  const codes=await codesNear(p, m);
+  regState={loading:codes.filter(c=>!REG[c]||REG[c].state==="loading").length};
+  if(regState.loading) renderPanel();
+  await Promise.all(codes.map(loadRegion));
+  regState=null;
+  return codes;
+}
+let regState=null;
 const dataReady = loadData().catch(e=>{ showMsg("자료를 불러오지 못했어요. 새로고침해 주세요."); throw e; });
 
 MM.kakaoFailed = function(){
@@ -80,8 +131,10 @@ MM.start = async function(){
   map = new K.Map($("#map"), {center:new K.LatLng(37.5565,126.99), level:8});
   map.addControl(new K.ZoomControl(), K.ControlPosition.RIGHT);
   ps = new K.services.Places();
+  geocoder = new K.services.Geocoder();
   drawLines(); drawStations();
   K.event.addListener(map,"zoom_changed",zoomClass); zoomClass();
+  K.event.addListener(map,"idle",findExtraStations);
   hideMsg();
   const h=decodeURIComponent(location.hash.slice(1));
   if(h){ const s=SUB.stations.find(x=>x.name===h.replace(/역$/,"")); if(s) selectStation(s); }
@@ -141,6 +194,32 @@ function toggleLine(id){
   stOverlays.forEach(({s,ov})=>{ const vis=s.lines.some(x=>!hiddenLines.has(x)); ov.setMap(vis?map:null); });
 }
 
+/* ---------- 서울 밖 전철역 (카카오 장소 분류: 지하철역 SW8) ---------- */
+let extraOverlays=[], extraTimer=0;
+const inSeoulData = (lat,lng) => lat>37.40&&lat<37.74&&lng>126.73&&lng<127.21;
+function findExtraStations(){
+  clearTimeout(extraTimer);
+  extraTimer=setTimeout(()=>{
+    if(!map||!ps||map.getLevel()>7) return;
+    const c=map.getCenter(); if(inSeoulData(c.getLat(),c.getLng())) return;
+    try{ ps.categorySearch("SW8",(data,status)=>{ if(status!==kakao.maps.services.Status.OK) return; data.forEach(addExtra); },{useMapBounds:true}); }catch(e){}
+  },400);
+}
+function extraName(pl){ return String(pl.place_name||"").replace(/\s*\S*호선$|\s*\S*선$/,"").replace(/역$/,""); }
+function addExtra(pl){
+  const name=extraName(pl); const lat=+pl.y, lng=+pl.x;
+  if(!name||SUB.stations.some(s=>s.name===name)||EXTRA.some(s=>s.name===name&&dist([s.lat,s.lng],[lat,lng])<400)) return null;
+  const line=(String(pl.place_name).match(/(\S*선)$/)||[])[1]||"";
+  const s={name,lat,lng,lines:[],line,kakao:true}; EXTRA.push(s);
+  if(map){ const el=document.createElement("div"); el.className="st kk"; el.style.setProperty("--lc","#6b7a73");
+    el.innerHTML=`<div class="dot"></div><div class="nm">${esc(name)}</div>`; el.title=`${name}역${line?" · "+line:""}`;
+    el.addEventListener("click",e=>{ e.stopPropagation(); selectStation(s); });
+    const ov=new kakao.maps.CustomOverlay({map, position:new kakao.maps.LatLng(lat,lng), content:el, zIndex:3, clickable:true});
+    stOverlays.push({s,ov,el}); }
+  return s;
+}
+const allStations = () => SUB.stations.concat(EXTRA);
+
 /* ---------- 역 ---------- */
 function drawStations(){
   const K=kakao.maps;
@@ -158,7 +237,7 @@ function drawStations(){
 function selectStation(s, keepView){
   sel=s; selApt=null;
   stOverlays.forEach(o=>o.el.classList.toggle("sel",o.s===s));
-  history.replaceState(null,"","#"+encodeURIComponent(s.name+"역"));
+  history.replaceState(null,"","#"+encodeURIComponent(s.name+(s.place?"":"역")));
   if(map){
     const K=kakao.maps, c=new K.LatLng(s.lat,s.lng);
     if(circle) circle.setMap(null);
@@ -166,8 +245,10 @@ function selectStation(s, keepView){
     if(!keepView){ map.setLevel(radius<=250?3:radius<=500?4:5); map.setCenter(c); }
   }
   refresh();
-  locateMissing(s);
+  const job=++selJob;
+  ensureNear([s.lat,s.lng], radius+800).then(codes=>{ if(job!==selJob) return; selCodes=codes; refresh(true); locateMissing(s); });
 }
+let selJob=0, selCodes=[];
 function stationApts(){
   if(!sel) return [];
   const p=[sel.lat,sel.lng]; const out=[];
@@ -182,8 +263,8 @@ let geoJob=0, geoState=null;
 async function locateMissing(s){
   if(!ps) return;
   const job=++geoJob; const p=[s.lat,s.lng];
-  const gus=gusNear(p, radius+1200);
-  const todo=APTS.filter(a=>!a.p && gus.has(a.g) && !(aptKey(a) in geoCache));
+  const gus=gusNear(p, radius+1200); const codes=new Set(selCodes);
+  const todo=APTS.filter(a=>!a.p && (codes.size?codes.has(a.c):gus.has(a.g)) && !(aptKey(a) in geoCache));
   if(!todo.length){ geoState=null; renderPanel(); return; }
   geoState={done:0,total:todo.length};
   renderPanel();
@@ -210,10 +291,11 @@ function search(q, loc){
 }
 async function findApt(a, loc){
   const norm=s=>s.replace(/\(.*?\)|아파트|\s/g,"");
-  const tries=[`${a.d} ${a.n}`, `${a.g} ${a.n} 아파트`];
+  const tries=[`${a.d} ${a.n}`, `${a.g} ${a.n} 아파트`, `${a.g} ${a.d} ${a.n}`];
   for(const q of tries){
     const rs=await search(q, loc);
-    const good=rs.filter(r=>(r.address_name||"").includes(a.g.replace("구",""))&&(r.address_name||"").includes(a.d));
+    const ad=String(a.d||"").split(" ").pop();
+    const good=rs.filter(r=>{ const addr=r.address_name||""; return addr.includes(a.g.replace(/[구시군]$/,""))&&addr.includes(ad); });
     const pick=good.find(r=>/아파트|주거/.test(r.category_name||"")&&norm(r.place_name).includes(norm(a.n).slice(0,2)))
       || good.find(r=>/아파트|주거/.test(r.category_name||""))
       || good.find(r=>norm(r.place_name).includes(norm(a.n)));
@@ -224,9 +306,9 @@ async function findApt(a, loc){
 
 /* ---------- 지도 위 단지 핀 ---------- */
 function drawApts(list){
-  const K=kakao.maps;
   aptOverlays.forEach(o=>o.ov.setMap(null)); aptOverlays=[];
   if(!map) return;
+  const K=kakao.maps;
   list.forEach((x,i)=>{
     const el=document.createElement("div");
     el.className="ap"+(selApt===x.a?" on":"");
@@ -246,8 +328,8 @@ function renderPanel(list){
   const foot=`<div class="foot-in">${$(".foot").innerHTML}</div>`;
   if(!sel){
     $("#panel").innerHTML=`<h1 class="view">역을 누르면 역세권 단지가 나와요</h1>
-      <p class="lede">지도에서 역을 누르거나 위 검색창에 역 이름을 쓰세요. 반경 안의 아파트가 가까운 순서로, 최근 실거래가와 함께 나와요.</p>
-      <div class="stats"><div class="stat"><b>${SUB.stations.length}</b><span>서울 지하철역</span></div><div class="stat"><b>${APTS.length.toLocaleString()}</b><span>아파트 단지</span></div><div class="stat"><b>${APTS.reduce((s,a)=>s+a.t.length,0).toLocaleString()}</b><span>실거래 (1년)</span></div></div>
+      <p class="lede">지도에서 역을 누르거나 위 검색창에 역·아파트·동네 이름을 쓰세요. 전국 어디든 반경 안의 아파트가 가까운 순서로, 국토교통부 최근 실거래가와 함께 나와요.</p>
+      <div class="stats"><div class="stat"><b>전국</b><span>250개 시군구</span></div><div class="stat"><b>${allStations().length}</b><span>지도에 표시된 역</span></div><div class="stat"><b>${LIVE?"직통":"서울"}</b><span>${LIVE?"국토부 실거래":"고정 자료"}</span></div></div>
       <h2 class="note" style="margin:4px 0 0;font-weight:700;color:var(--ink)">자주 보는 역</h2>
       <div class="quick">${QUICK.map(n=>`<button type="button" data-st="${esc(n)}">${esc(n)}역</button>`).join("")}</div>${foot}`;
     bindPanel(); return;
@@ -256,16 +338,18 @@ function renderPanel(list){
   const tr=list.reduce((s,x)=>s+x.a.t.length,0);
   const prices=list.map(x=>x.a.t.at(-1)).filter(Boolean);
   const med=prices.length?prices.map(t=>t[1]).sort((a,b)=>a-b)[Math.floor(prices.length/2)]:0;
-  const prog=geoState?`<div class="progress">단지 위치 찾는 중 ${geoState.done}/${geoState.total}<span class="bar"><i style="width:${Math.round(geoState.done/geoState.total*100)}%"></i></span></div>`:"";
-  $("#panel").innerHTML=`<div><h1 class="view">${esc(sel.name)}역 반경 ${meters(radius)}</h1>
-    <div class="pills" style="margin-top:6px">${sel.lines.map(id=>{const l=lineById(id);return `<span class="pill" style="--lc:${l.color}"><i></i>${esc(l.name)}</span>`}).join("")}<span class="pill">도보 약 ${walk(radius)}분 이내</span></div></div>
+  const failed=selCodes.filter(c=>REG[c]&&REG[c].state==="fail"&&!APTS.some(a=>a.c===c));
+  const prog=(regState&&regState.loading?`<div class="progress">국토부 실거래 받는 중…<span class="bar"><i style="width:40%"></i></span></div>`:"")
+    +(failed.length?`<div class="note" style="color:var(--red,#b3372e)">이 지역 실거래를 받지 못했어요. ${esc(REG[failed[0]].err||"")}</div>`:"")+(geoState?`<div class="progress">단지 위치 찾는 중 ${geoState.done}/${geoState.total}<span class="bar"><i style="width:${Math.round(geoState.done/geoState.total*100)}%"></i></span></div>`:"");
+  $("#panel").innerHTML=`<div><h1 class="view">${esc(sel.name)}${sel.place?"":"역"} 반경 ${meters(radius)}</h1>
+    <div class="pills" style="margin-top:6px">${sel.lines.map(id=>{const l=lineById(id);return `<span class="pill" style="--lc:${l.color}"><i></i>${esc(l.name)}</span>`}).join("")}${sel.line?`<span class="pill"><i></i>${esc(sel.line)}</span>`:""}<span class="pill">도보 약 ${walk(radius)}분 이내</span></div></div>
     <div class="stats"><div class="stat"><b>${list.length}</b><span>단지</span></div><div class="stat"><b>${tr.toLocaleString()}</b><span>거래 (1년)</span></div><div class="stat"><b>${med?wonShort(med):"-"}</b><span>최근 거래 중간값</span></div></div>
     ${prog}
     <div class="chips" role="group" aria-label="정렬">${[["dist","가까운 순"],["price","최근가 높은 순"],["count","거래 많은 순"],["recent","최근 거래 순"]].map(([k,l])=>`<button type="button" class="chip ${sortBy===k?"on":""}" data-sort="${k}">${l}</button>`).join("")}</div>
     <div class="list">${list.length?list.map((x,i)=>{const t=x.a.t.at(-1);return `<button type="button" class="row ${selApt===x.a?"on":""}" data-apt="${APTS.indexOf(x.a)}">
       <span class="no">${i+1}</span>
       <span><span class="t">${esc(x.a.n)}</span><span class="s" style="display:block">${esc(x.a.d)} · ${meters(x.d)} · 도보 ${walk(x.d)}분</span></span>
-      <span class="r">${t?`<span class="p">${wonShort(t[1])}</span><br>${Math.floor(t[2]/100)}㎡ · ${ym2(t[0])}`:"거래 없음"}</span></button>`}).join(""):`<div class="empty">${geoState?"단지 위치를 찾고 있어요. 잠시만 기다려 주세요.":"반경 안에 실거래가 있는 아파트가 없어요. 반경을 넓혀 보세요."}</div>`}</div>
+      <span class="r">${t?`<span class="p">${wonShort(t[1])}</span><br>${Math.floor(t[2]/100)}㎡ · ${ym2(t[0])}`:"거래 없음"}</span></button>`}).join(""):`<div class="empty">${regState||geoState?"실거래와 단지 위치를 찾고 있어요. 잠시만 기다려 주세요.":"반경 안에 실거래가 있는 아파트가 없어요. 반경을 넓혀 보세요."}</div>`}</div>
     <p class="note">최근가는 가장 최근 계약 1건이에요(면적 다를 수 있음). 단지를 누르면 면적별 그래프와 전체 거래가 나와요.</p>${foot}`;
   bindPanel();
 }
@@ -287,11 +371,11 @@ function openApt(a, areaKey){
   curArea=areaKey;
   const S=summary(a,areaKey);
   const q=pos(a);
-  const near=q?SUB.stations.map(s=>({s,d:dist(q,[s.lat,s.lng])})).sort((x,y)=>x.d-y.d).slice(0,3):[];
+  const near=q?allStations().map(s=>({s,d:dist(q,[s.lat,s.lng])})).sort((x,y)=>x.d-y.d).slice(0,3).filter(x=>x.d<3000):[];
   const sheet=$("#sheet");
   sheet.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(a.n)} 실거래">
     <h2><span>${esc(a.n)}<span class="note" style="display:block;font-weight:500">${esc(a.g)} ${esc(a.d)}</span></span><button type="button" class="x" aria-label="닫기">×</button></h2>
-    ${near.length?`<div class="near">${near.map(({s,d})=>`<span>${esc(s.name)}역 <b>${meters(d)}</b> · 도보 ${walk(d)}분 ${s.lines.map(id=>`<span class="pill" style="--lc:${lineById(id).color}"><i></i>${esc(lineById(id).name)}</span>`).join(" ")}</span>`).join("")}</div>`:`<div class="note">지도 위치를 아직 못 찾은 단지예요.</div>`}
+    ${near.length?`<div class="near">${near.map(({s,d})=>`<span>${esc(s.name)}역 <b>${meters(d)}</b> · 도보 ${walk(d)}분 ${s.line?`<span class="pill"><i></i>${esc(s.line)}</span>`:""}${s.lines.map(id=>`<span class="pill" style="--lc:${lineById(id).color}"><i></i>${esc(lineById(id).name)}</span>`).join(" ")}</span>`).join("")}</div>`:`<div class="note">${q?"3km 안에 전철역이 없어요.":"지도 위치를 아직 못 찾은 단지예요."}</div>`}
     <div class="chips" role="group" aria-label="전용면적">${ar.map(([k,n])=>`<button type="button" class="chip ${k===areaKey?"on":""}" data-area="${k}">전용 ${k}㎡ <span class="num">${n}건</span></button>`).join("")}</div>
     ${S?`<div class="cards">
       <div style="--ac:var(--gold)"><span>최근 1년 최고가</span><b>${wonShort(S.high[1])}</b><small>${ymd(S.high[0])} · ${S.high[3]}층</small></div>
@@ -354,21 +438,46 @@ function dToX(n){ const s=String(n); return Date.UTC(+s.slice(0,4),+s.slice(4,6)
 function niceStep(x){ const p=10**Math.floor(Math.log10(x)); const f=x/p; return (f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*p; }
 
 /* ---------- 검색 ---------- */
+function placeSearch(q){ return new Promise(res=>{ if(!ps) return res([]); try{ ps.keywordSearch(q,(d,st)=>res(st===kakao.maps.services.Status.OK?d:[]),{size:8}); }catch(e){ res([]); } }); }
+let searchSeq=0;
+async function goPlace(p){
+  const lat=+p.y, lng=+p.x;
+  if(p.category_group_code==="SW8"){ const s=addExtra(p)||allStations().find(x=>x.name===extraName(p)); if(s){ selectStation(s); return; } }
+  const s={name:p.place_name, lat, lng, lines:[], place:true};
+  selectStation(s);
+  if(/아파트|주거/.test(p.category_name||"")){
+    const codes=new Set(await ensureNear([lat,lng], radius+800));
+    const norm=v=>String(v).replace(/\(.*?\)|아파트|\d+단지|\s/g,"");
+    const k=norm(p.place_name);
+    const c=APTS.filter(a=>codes.has(a.c)&&norm(a.n).length>=2&&(norm(a.n)===k||k.includes(norm(a.n))||norm(a.n).includes(k)));
+    const a=c.sort((x,y)=>(norm(y.n)===k)-(norm(x.n)===k)||norm(y.n).length-norm(x.n).length)[0];
+    if(a){ if(!pos(a)) { geoCache[aptKey(a)]=[lat,lng]; saveGeo(); refresh(true); } openApt(a); }
+  }
+}
 function onSearch(){
   const v=$("#q").value.trim().replace(/역$/,"");
   const box=$("#sugg");
   if(!v||!SUB){ box.hidden=true; return; }
-  const sts=SUB.stations.filter(s=>s.name.includes(v)).slice(0,6);
+  const sts=allStations().filter(s=>s.name.includes(v)).slice(0,6);
   const aps=APTS.filter(a=>a.n.includes(v)||(`${a.d} ${a.n}`).includes(v)).slice(0,8);
-  if(!sts.length&&!aps.length){ box.innerHTML=`<div class="empty" style="border:0">찾는 역이나 단지가 없어요</div>`; box.hidden=false; return; }
+  const seq=++searchSeq;
+  if(ps) placeSearch(v).then(pl=>{
+    if(seq!==searchSeq||box.hidden) return;
+    const extra=pl.filter(p=>!(p.category_group_code==="SW8"&&sts.some(s=>s.name===extraName(p)))).slice(0,6);
+    const em=box.querySelector(".empty"); if(em&&extra.length) em.remove();
+    if(!extra.length){ if(em) em.textContent="찾는 역이나 단지가 없어요"; return; }
+    box.insertAdjacentHTML("beforeend", extra.map((p,i)=>`<button type="button" data-gp="${i}"><span class="pill">${p.category_group_code==="SW8"?"역":/아파트|주거/.test(p.category_name||"")?"단지":"장소"}</span>${esc(p.place_name)}<span class="k">${esc(p.address_name||"")}</span></button>`).join(""));
+    box.querySelectorAll("[data-gp]").forEach(b=>b.onclick=()=>{ box.hidden=true; $("#q").value=""; goPlace(extra[+b.dataset.gp]); });
+  });
+  if(!sts.length&&!aps.length){ box.innerHTML=`<div class="empty" style="border:0">${ps?"전국에서 찾는 중…":"찾는 역이나 단지가 없어요"}</div>`; box.hidden=false; return; }
   box.innerHTML=sts.map(s=>`<button type="button" data-gs="${esc(s.name)}"><span class="pill" style="--lc:${stColor(s)}"><i></i>역</span>${esc(s.name)}역<span class="k">${s.lines.map(id=>lineById(id).name).join(", ")}</span></button>`).join("")
     +aps.map(a=>`<button type="button" data-ga="${APTS.indexOf(a)}"><span class="pill">단지</span>${esc(a.n)}<span class="k">${esc(a.g)} ${esc(a.d)}</span></button>`).join("");
   box.hidden=false;
-  box.querySelectorAll("[data-gs]").forEach(b=>b.onclick=()=>{ box.hidden=true; $("#q").value=""; selectStation(SUB.stations.find(s=>s.name===b.dataset.gs)); });
+  box.querySelectorAll("[data-gs]").forEach(b=>b.onclick=()=>{ box.hidden=true; $("#q").value=""; selectStation(allStations().find(s=>s.name===b.dataset.gs)); });
   box.querySelectorAll("[data-ga]").forEach(b=>b.onclick=async()=>{ box.hidden=true; $("#q").value=""; const a=APTS[+b.dataset.ga];
     if(!pos(a)&&ps){ geoCache[aptKey(a)]=await findApt(a,new kakao.maps.LatLng(37.5565,126.99)); saveGeo(); }
     const q=pos(a);
-    if(q){ const near=[...SUB.stations].sort((x,y)=>dist(q,[x.lat,x.lng])-dist(q,[y.lat,y.lng]))[0];
+    if(q){ const near=allStations().slice().sort((x,y)=>dist(q,[x.lat,x.lng])-dist(q,[y.lat,y.lng]))[0];
       if(near){ const d=dist(q,[near.lat,near.lng]); if(d>radius) setRadius(d<=1000?1000:radius); selectStation(near,true); if(map){ map.setCenter(new kakao.maps.LatLng(q[0],q[1])); map.setLevel(4);} } }
     openApt(a); });
 }
@@ -395,7 +504,7 @@ function hideMsg(){ $("#mapMsg").hidden=true; }
 dataReady.then(()=>renderPanel());
 renderPanel();
 MM.data={ready:dataReady, get apts(){return APTS}, get subway(){return SUB}, get asOf(){return ASOF}, pos, dist, summary, areas, won, wonShort, ymd,
-  nearest:(p,n=3)=>SUB.stations.map(s=>({s,d:dist(p,[s.lat,s.lng])})).sort((x,y)=>x.d-y.d).slice(0,n), lineName:id=>lineById(id).name};
+  loadRegion, codeAt, findPlace:q=>placeSearch(q), nearest:(p,n=3)=>allStations().map(s=>({s,d:dist(p,[s.lat,s.lng])})).sort((x,y)=>x.d-y.d).slice(0,n), lineName:id=>lineById(id).name};
 MM.relayout=()=>{ if(map){ map.relayout(); if(sel) map.setCenter(new kakao.maps.LatLng(sel.lat,sel.lng)); } };
 MM._test={get state(){return {sel,radius,geoState}},selectStation:n=>selectStation(SUB.stations.find(s=>s.name===n)),openApt:n=>openApt(APTS.find(a=>a.n===n))};
 })();

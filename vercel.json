@@ -1,0 +1,7 @@
+{
+  "rewrites": [{ "source": "/mcp", "destination": "/api/mcp" }],
+  "functions": {
+    "api/mcp.js": { "maxDuration": 60 },
+    "api/rt.js": { "maxDuration": 60 }
+  }
+}
