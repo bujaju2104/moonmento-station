@@ -51,6 +51,12 @@ SheetJS xlsx 0.18.5 (cdnjs), pdf.js 3.11.174 (cdnjs), tesseract.js 5.1.1 + 한�
 - `POST /mcp` → Claude 사용자 지정 커넥터 「문멘토 실거래」 (문멘토 중개노트 앱과 Claude 대화에서 사용). 도구: `find_region`, `apt_trades`, `apt_trade_doc` (`kind: "분양권"` 지원).
 - 코드: `api/rt.js`, `api/mcp.js`, `lib/molit.js`(국토부 호출·해제 거래 제외·상세→일반 API 자동 전환), `lib/regions.js`(전국 250개 시군구)
 
+## 건축물대장 (국토부 건축HUB 표제부)
+- 매물 → 재개발 구역별 보기 → 매물 상세 → **🏢 건축물대장 불러오기**: 지번 주소(없으면 단지명)를 카카오로 필지(법정동 코드·본번·부번)로 바꾼 뒤 `/api/building`으로 표제부를 받아 용도·구조·연면적·층수·세대·사용승인일·도로명을 보여 줘요. **매물 칸에 채우기**로 사용승인일·구조·용도(단독은 연면적·층수까지)를 매물에 넣어요.
+- `GET /api/building?sigunguCd=11140&bjdongCd=16200&bun=236&ji=206[&dong=207동]` (CDN 하루 캐시), 커넥터 도구 `building_title`
+- 실거래와 같은 `MOLIT_SERVICE_KEY`를 쓰고, 공공데이터포털 **국토교통부_건축HUB_건축물대장정보 서비스(15134735)** 활용신청이 필요해요.
+- 위반건축물 여부와 호별 전용면적(전유부)은 표제부에 없어요.
+
 ### Vercel 설정 (처음 한 번)
 Project → Settings → Environment Variables 에 추가하고 Redeploy:
 

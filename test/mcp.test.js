@@ -50,7 +50,7 @@ test('MCP handshake, tool list and auth', async () => {
     const note = await rpc(port, { jsonrpc: '2.0', method: 'notifications/initialized' });
     assert.equal(note.status, 202);
     const list = await rpc(port, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    assert.deepEqual(list.body.result.tools.map((t) => t.name), ['find_region', 'apt_trades', 'apt_trade_doc']);
+    assert.deepEqual(list.body.result.tools.map((t) => t.name), ['find_region', 'apt_trades', 'building_title', 'apt_trade_doc']);
     const denied = await rpc(port, { jsonrpc: '2.0', id: 3, method: 'tools/list' }, 'wrong');
     assert.equal(denied.status, 401);
   } finally { s.close(); }

@@ -264,6 +264,60 @@ function zWarn(r){
   if(r.violation&&!/해당\s*없음|없음/.test(r.violation)) w.push("위반건축물이 있어요. 이행강제금과 분양자격 영향을 확인하세요.");
   return w;
 }
+/* ---------- 건축물대장 (국토부 건축HUB 표제부, /api/building) ---------- */
+const bldCache={};
+function geoParcel(r){ return new Promise(res=>{
+  const K=window.kakao&&kakao.maps&&kakao.maps.services; if(!K) return res({err:"카카오 지도를 쓸 수 없어서 지번을 찾지 못했어요. 새로고침 후 다시 눌러 주세요."});
+  const g=new K.Geocoder(), addr=String(r.address||"").trim();
+  const viaPlace=()=>{ const q=[r.region,r.complex].filter(Boolean).join(" "); if(!q) return res({err:"주소(지번)를 넣어 주세요. 예: 중구 신당동 236-206"});
+    new K.Places().keywordSearch(q,(d,st)=>{ if(st!==K.Status.OK||!d[0]) return res({err:"위치를 찾지 못했어요. 표로 보기에서 지번 주소를 넣어 주세요."});
+      const x=+d[0].x,y=+d[0].y;
+      g.coord2Address(x,y,(a,s1)=>{ const ad=s1===K.Status.OK&&a[0]&&a[0].address; if(!ad) return res({err:"지번을 찾지 못했어요."});
+        g.coord2RegionCode(x,y,(rc,s2)=>{ const b=s2===K.Status.OK&&rc.find(z=>z.region_type==="B"); if(!b) return res({err:"법정동을 찾지 못했어요."});
+          res({b:String(b.code),bun:ad.main_address_no,ji:ad.sub_address_no||"0",san:ad.mountain_yn==="Y",label:ad.address_name}); }); }); }); };
+  if(/\d+(-\d+)?\s*$/.test(addr)&&!/\d+\s*호\s*$/.test(addr)){
+    const q=/^(서울|경기|인천|부산|대구|광주|대전|울산|세종|강원|충|전|경|제주)/.test(addr)?addr:"서울 "+addr;
+    g.addressSearch(q,(d,st)=>{ const a=st===K.Status.OK&&d[0]&&d[0].address; if(a&&a.b_code) return res({b:String(a.b_code),bun:a.main_address_no,ji:a.sub_address_no||"0",san:a.mountain_yn==="Y",label:a.address_name}); viaPlace(); });
+  } else viaPlace();
+});}
+async function loadBuilding(r){
+  if(bldCache[r.id]) return bldCache[r.id];
+  const p=await geoParcel(r); if(p.err) return p;
+  const dong=(String((r.dongho||"")+" "+(r.address||"")).match(/(\d{2,4})\s*동(?!\S*가)/)||[])[1];
+  const qs=new URLSearchParams({sigunguCd:p.b.slice(0,5),bjdongCd:p.b.slice(5,10),bun:p.bun,ji:p.ji,platGbCd:p.san?"1":"0",...(dong?{dong:dong+"동"}:{})});
+  try{ const x=await fetch("/api/building?"+qs); const j=await x.json(); if(!x.ok) return {err:j.error||"건축물대장을 불러오지 못했어요."}; return bldCache[r.id]={...j,label:p.label}; }
+  catch(e){ return {err:"건축물대장 서버에 연결하지 못했어요."}; }
+}
+const ymd8=s=>/^\d{8}$/.test(s||"")?`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`:"";
+function bldHTML(b){
+  if(b.err) return `<div class="zwarn">${esc(b.err)}</div>`;
+  if(!b.items||!b.items.length) return `<div class="zwarn">이 필지에 건축물대장 표제부가 없어요. 지번을 다시 확인해 주세요.</div>`;
+  const x=b.items[0], more=b.items.length>1?` 외 ${b.items.length-1}개 동`:"";
+  const cell=(k,v)=>`<div class="zd"><span>${k}</span><b>${v||"-"}</b></div>`;
+  return `<div class="zsim"><b>🏢 건축물대장 표제부 <span class="note" style="font-weight:400">${esc(b.label||x.platPlc)}${more}</span></b>
+    <div class="zdg">${cell("대장 · 건물",esc([x.regstrKindCdNm,x.bldNm,x.dongNm].filter(Boolean).join(" · ")))}${cell("용도",esc(x.mainPurpsCdNm+(x.etcPurps?` (${x.etcPurps})`:"")))}
+    ${cell("구조",esc(x.strctCdNm+(x.etcStrct&&x.etcStrct!==x.strctCdNm?` (${x.etcStrct})`:"")))}${cell("연면적",x.totArea?`${esc(x.totArea)}㎡ (${(x.totArea/3.3058).toFixed(2)}평)`:"")}
+    ${cell("층수",`지상 ${esc(x.grndFlrCnt||0)}층${+x.ugrndFlrCnt?` / 지하 ${esc(x.ugrndFlrCnt)}층`:""}`)}${cell("세대 · 가구",esc([+x.hhldCnt?x.hhldCnt+"세대":"",+x.fmlyCnt?x.fmlyCnt+"가구":"",+x.hoCnt?x.hoCnt+"호":""].filter(Boolean).join(" · ")))}
+    ${cell("사용승인일",ymd8(x.useAprDay))}${cell("도로명",esc(x.newPlatPlc))}</div>
+    <div class="btns"><button type="button" class="btn" id="zbldFill">매물 칸에 채우기</button></div>
+    <p class="note">국토교통부 건축HUB 건축물대장 표제부예요. 위반건축물 여부와 호별 전용면적은 이 자료에 없어서 정부24 건축물대장(전유부)으로 확인해 주세요.</p></div>`;
+}
+function bindBld(r){
+  if(bldCache[r.id]){ bindFill(r,bldCache[r.id]); return; }
+  const btn=$("#zbldBtn"); if(!btn) return;
+  btn.onclick=async()=>{ btn.disabled=true; btn.textContent="건축물대장 불러오는 중…"; const b=await loadBuilding(r); $("#zbld").innerHTML=bldHTML(b); bindFill(r,b); };
+}
+function bindFill(r,b){
+    const f=$("#zbldFill"); if(f) f.onclick=()=>{ const x=b.items[0]; const single=!/표제부|집합/.test(x.regstrKindCdNm)||b.items.length===1&&!x.dongNm;
+      if(ymd8(x.useAprDay)) r.builtDate=ymd8(x.useAprDay);
+      if(x.strctCdNm) r.structure=x.strctCdNm+(x.etcStrct&&x.etcStrct!==x.strctCdNm?` (${x.etcStrct})`:"");
+      if(x.mainPurpsCdNm) r.usage=x.mainPurpsCdNm;
+      if(single&&+x.totArea) r.gfa=+x.totArea;
+      if(single&&x.grndFlrCnt&&!r.floor) r.floor=`${x.grndFlrCnt}/${+x.ugrndFlrCnt?x.ugrndFlrCnt:"-"}층`;
+      if(x.newPlatPlc) r.roadAddr=x.newPlatPlc;
+      store(K_L,LIST); toast("건축물대장 내용을 매물에 넣었어요"); openZDetail(r.id); };
+}
+
 function openZDetail(id){
   const r=LIST.find(x=>x.id===id); if(!r) return;
   const c=calcL(r), z=zoneOf(r.zone), rv=rights(r), sheet=$("#sheet");
@@ -285,13 +339,14 @@ function openZDetail(id){
       ${r.gfa?cell("연면적",`${esc(r.gfa)}㎡ (${(r.gfa/3.3058).toFixed(2)}평)`):cell("공급면적",r.supply?`${esc(r.supply)}㎡ (${esc(r.pyeong||"")})`:"")}${cell("층 · 방/욕실",esc([r.floor,r.rooms&&r.rooms+"(방/욕)"].filter(Boolean).join(" · ")))}
       ${cell("사업단계",esc(z.stage))}${cell("건립총세대수",z.households?esc(z.households)+"세대":"")}
       ${cell("소유주",esc(r.ownerName))}${cell("위반건축물",esc(r.violation))}
-      ${cell("사용승인일",esc(r.builtDate))}${cell("건물 세대수 · 주차",esc([r.households,r.parking&&"주차 "+r.parking].filter(Boolean).join(" · ")))}
+      ${cell("사용승인일",esc(r.builtDate)+(r.structure?` · ${esc(r.structure)}`:""))}${cell("건물 세대수 · 주차",esc([r.households,r.parking&&"주차 "+r.parking].filter(Boolean).join(" · ")))}
       ${cell("프리미엄",c.premium!==""?won(c.premium)+"원":"","em")}${cell("실투자금",c.invest!==""?won(c.invest)+"원":"","em")}
       ${cell("보증금(승계)",r.deposit?won(r.deposit)+"원":"")}${cell("월세",r.rent?r.rent+"만원":"")}
       ${cell("종전자산가액",r.appraisal?(+r.appraisal*10000).toLocaleString("ko-KR")+"원":"")}${cell("추정권리가액",rv?(rv*10000).toLocaleString("ko-KR")+"원":"")}
     </div>
     ${W.map(t=>`<div class="zwarn">${esc(t)}</div>`).join("")}
     ${r.memo?`<div class="zmemo"><b>매물 소개</b><p>${esc(r.memo)}</p></div>`:""}
+    <div id="zbld">${bldCache[r.id]?bldHTML(bldCache[r.id]):`<button type="button" class="btn" id="zbldBtn">🏢 건축물대장 불러오기 (국토부)</button>`}</div>
     ${sim}
     ${r.srcAgent?`<p class="note">원 광고: ${esc(r.srcAgent)} (우리 사무소 매물 아님 · 공동중개 확인용)</p>`:""}
     <div class="zbtns">${r.ownerTel?`<a class="btn" href="tel:${esc(r.ownerTel.replace(/[^\d]/g,""))}">☎ ${esc(r.ownerTel)}</a>`:`<button type="button" class="btn" disabled>☎ 번호 미입력</button>`}${r.articleNo?`<a class="btn nv" href="${naverUrl(r.articleNo)}" target="_blank" rel="noopener">N 네이버 매물</a>`:`<button type="button" class="btn" disabled>N 매물번호 없음</button>`}</div>
@@ -300,6 +355,7 @@ function openZDetail(id){
   </div>`;
   sheet.hidden=false; const close=()=>{ sheet.hidden=true; sheet.innerHTML=""; };
   sheet.querySelector(".x").onclick=close; sheet.onclick=e=>{ if(e.target===sheet) close(); };
+  bindBld(r);
   $("#zcopy").onclick=()=>copy([`🏠 ${r.zone?r.zone+" ":""}${r.ptype||"매물"} ${r.deal||""} ${r.price?won(r.price)+"원":""}`,
     r.address?`· 위치: ${r.address}`:"", r.area?`· 전용 ${r.area}㎡${r.land?` / 대지지분 ${r.land}㎡`:""}`:"", r.floor||r.rooms?`· ${[r.floor,r.rooms&&"방/욕실 "+r.rooms,r.dir].filter(Boolean).join(" · ")}`:"",
     r.deposit?`· 승계 보증금 ${won(r.deposit)}원 → 실투자금 ${won(c.invest)}원`:"", c.premium!==""?`· 프리미엄 ${won(c.premium)}원`:"",

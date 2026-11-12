@@ -3,6 +3,7 @@
 // 중개노트 앱과 Claude 대화에서 함께 쓴다.
 const { fetchRegion, fetchMonth, buildDoc, MolitError, withRequestKey } = require('../lib/molit');
 const { REGIONS, BY_CODE } = require('../lib/regions');
+const { brTitle } = require('../lib/building');
 
 const SERVER = { name: 'moonmento-rt', title: '문멘토 실거래', version: '1.0.0' };
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -32,6 +33,18 @@ const TOOLS = [
       },
       required: ['lawd_cd', 'ym'],
     },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  {
+    name: 'building_title',
+    title: '건축물대장 (표제부)',
+    description: '국토교통부 건축물대장 표제부를 필지(시군구코드·법정동코드·본번·부번)로 조회한다. 용도, 구조, 연면적, 층수, 세대수, 사용승인일. 아파트는 dong으로 동을 고른다. 위반건축물 여부와 호별 전용면적은 들어 있지 않다.',
+    inputSchema: { type: 'object', properties: {
+      sigungu_cd: { type: 'string', pattern: '^\\d{5}$', description: '시군구 코드 5자리 (법정동코드 앞 5자리)' },
+      bjdong_cd: { type: 'string', pattern: '^\\d{5}$', description: '법정동 코드 뒤 5자리' },
+      bun: { type: 'string', description: '본번 (예: 236)' }, ji: { type: 'string', description: '부번 (예: 206, 없으면 0)' },
+      san: { type: 'boolean', description: '산 번지면 true' }, dong: { type: 'string', description: '동 이름 (예: 207동)' } },
+      required: ['sigungu_cd', 'bjdong_cd', 'bun'] },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
   {
@@ -69,6 +82,11 @@ async function callTool(name, a = {}) {
     const head = `${r ? r.sido + ' ' + r.name : code} ${a.ym} 아파트 ${kind === '분양권' ? '분양권·입주권 전매' : '매매'} ${rows.length}건 (국토교통부 실거래가, 해제 거래 제외, 금액 단위 만원)`;
     const lines = rows.slice(0, 300).map((t) => `${t.y}-${t.m}-${t.d} | ${t.dong} ${t.apt} | 전용 ${t.area}㎡ | ${t.floor}층 | ${t.price.toLocaleString('ko-KR')}만원${t.gbn === '직거래' ? ' | 직거래' : ''}${t.kind ? ' | ' + t.kind : ''}`);
     return { text: [head, ...lines, rows.length > 300 ? `… 외 ${rows.length - 300}건` : ''].filter(Boolean).join('\n'), data: { region: code, ym: a.ym, count: rows.length, trades: rows } };
+  }
+  if (name === 'building_title') {
+    const r = await brTitle({ sigunguCd: a.sigungu_cd, bjdongCd: a.bjdong_cd, bun: a.bun, ji: a.ji, platGbCd: a.san ? '1' : '0', dong: a.dong });
+    const L = r.items.map((x) => `${x.platPlc}${x.bldNm ? ' ' + x.bldNm : ''}${x.dongNm ? ' ' + x.dongNm : ''} · ${x.regstrKindCdNm} · ${x.mainPurpsCdNm}${x.etcPurps ? '(' + x.etcPurps + ')' : ''} · ${x.strctCdNm}${x.etcStrct ? '(' + x.etcStrct + ')' : ''} · 연면적 ${x.totArea}㎡ · 지상 ${x.grndFlrCnt}층/지하 ${x.ugrndFlrCnt}층 · 세대 ${x.hhldCnt || 0} · 사용승인 ${x.useAprDay}`);
+    return { text: [`건축물대장 표제부 ${r.items.length}건 (국토교통부 건축HUB)`, ...L].join('\n'), data: r };
   }
   if (name === 'apt_trade_doc') {
     const code = checkCode(a.lawd_cd);
