@@ -73,7 +73,7 @@ function findDates(t){
 /* ======================================================================
    매물 정리
    ====================================================================== */
-const L_COLS=[["complex","단지·건물"],["dongho","동·호"],["zone","재개발 구역"],["region","지역"],["address","주소(지번)"],["ptype","유형"],["deal","거래"],["price","매매가·보증금(만원)"],["rent","월세(만원)"],["deposit","승계 보증금(만원)"],["appraisal","감정가(만원)"],["estAppraisal","추정감정가(만원)"],["supply","공급(㎡)"],["area","전용(㎡)"],["pyeong","평형"],["floor","층"],["dir","향"],["rooms","방/욕실"],["moveIn","입주"],["articleNo","네이버 매물번호"],["confirmed","확인일"],["ownerName","소유주 성함"],["ownerTel","소유주 전화"],["memo","메모"]];
+const L_COLS=[["complex","단지·건물"],["dongho","동·호"],["zone","재개발 구역"],["region","지역"],["address","주소(지번)"],["ptype","유형"],["deal","거래"],["status","광고상태"],["price","매매가·보증금(만원)"],["rent","월세(만원)"],["deposit","승계 보증금(만원)"],["appraisal","감정가(만원)"],["estAppraisal","추정감정가(만원)"],["supply","공급(㎡)"],["area","전용(㎡)"],["land","대지지분(㎡)"],["pyeong","평형"],["floor","층"],["dir","향"],["rooms","방/욕실"],["moveIn","입주"],["builtDate","사용승인일"],["violation","위반건축물"],["articleNo","네이버 매물번호"],["confirmed","확인일"],["ownerName","소유주 성함"],["ownerTel","소유주 전화"],["srcAgent","원 광고 중개사"],["memo","메모"]];
 const L_MONEY=["price","rent","deposit","appraisal","estAppraisal"];
 const L_XCOLS=L_COLS.slice(0,12).concat([["premium","프리미엄(만원)"],["invest","실투자금(만원)"]],L_COLS.slice(12));
 const calcL=r=>{ const p=+r.price||0, base=+r.appraisal||+r.estAppraisal||0, dep=+r.deposit||0; return {premium:r.deal==="매매"&&p&&base?p-base:"", invest:r.deal==="매매"&&p?p-dep:""}; };
@@ -99,6 +99,7 @@ function parseKV(t){
   return n>=3?o:null;
 }
 function parseListing(t){
+  if(isNaver(t)) return finishL(parseNaver(t),t);
   const kv=parseKV(t);
   if(kv){ L_MONEY.forEach(k=>{ if(kv[k]) kv[k]=toMan(kv[k])||kv[k]; }); return finishL(kv,t); }
   const o={}; const flat=t.replace(/\s+/g," ");
@@ -152,15 +153,167 @@ function parseListing(t){
 }
 function finishL(o,raw){ o.id=uid(); o.raw=raw; o.added=TODAY(); L_COLS.forEach(([k])=>{ if(o[k]==null) o[k]=""; }); if(o.area&&!o.pyeong&&!o.supply) o.pyeong=""; return o; }
 
+/* ---------- 네이버 매물 상세 화면(복사·캡처) 읽기 ---------- */
+// 네이버 부동산 매물 페이지를 통째로 복사하거나 캡처 글자 인식한 내용을 매물 한 건으로 정리한다.
+// 다른 중개사무소 정보(중개사 영역, ***** 사이 연락처)는 소유주 정보로 쓰지 않고 '원 광고 중개사'로만 남긴다.
+const NV_KEYS=[["매매가","price"],["전세가","price"],["보증금","price"],["월세","rent"],["기전세금","deposit"],["융자금","loan"],["관리비","mgmt"],["공급면적","supplyP"],["계약면적","supplyP"],["전용면적","areaP"],["대지지분","landP"],["연면적","gfaP"],["해당층/총층","floor"],["방수/욕실수","rooms"],["향","dir"],["주차가능여부","parking"],["입주가능일","moveIn"],["위반건축물 여부","violation"],["위반건축물여부","violation"],["매물번호","articleNo"],["건축물용도","usage"],["사용승인일","builtDate"],["세대수","households"],["위치","address"]];
+const NV_NOISE=/도움말\s*보기|도움말|면적\s*단위\s*변경\s*㎡?|상세보기|지도보기|상세내용\s*(보기|숨기기)/g;
+const isNaver=t=>{ const n=["기본 정보","매물번호","공급면적","전용면적","해당층/총층","확인매물","방수/욕실수","기전세금"].filter(k=>t.includes(k)).length; return n>=3; };
+function splitNaver(t){ const parts=t.split(/(?=Npay 부동산 매물지도|네이버페이\s*(?:빌라|아파트|오피스텔|단독|상가|토지|건물))/).filter(x=>isNaver(x)); return parts.length>1?parts:[t]; }
+const P2M=p=>Math.round(p*3.3058*100)/100;
+function parseNaver(t){
+  t=t.replace(/\r/g,"");
+  // 중개사 영역은 떼어 둠 (우리 매물 정보가 아님)
+  let agent="", agentTel="";
+  const cut=t.search(/\n\s*중개사\s*\n\s*중개소|\n\s*중개사\s*\n|\n\s*중개사 상담/);
+  const tail=cut>=0?t.slice(cut):""; let body=cut>=0?t.slice(0,cut):t;
+  const am=(tail+body).match(/([가-힣A-Za-z]+(?:공인중개사(?:사무소)?|부동산중개|부동산)(?:주식회사|\(주\))?)/); if(am) agent=am[1];
+  // 매물 소개 안의 ***** 사이 연락처 블록 제거
+  body=body.replace(/\*{5,}[\s\S]*?\*{5,}/g,m=>{ const a=m.match(/([가-힣A-Za-z]+공인중개사[가-힣]*)/); if(a&&!agent) agent=a[1]; const tel=m.match(/0\d{1,2}[-\s.]?\d{3,4}[-\s.]?\d{4}/); if(tel) agentTel=tel[0]; return "\n"; });
+  const lines=body.split("\n").map(x=>x.replace(NV_NOISE,"").trim()).filter(Boolean);
+  const o={}; const flat=lines.join(" ");
+  for(let i=0;i<lines.length;i++){
+    const l=lines[i];
+    for(const [lab,key] of NV_KEYS){
+      if(o[key]!=null&&key!=="price") continue;
+      if(l===lab){ const v=lines[i+1]; if(v&&!NV_KEYS.some(([x])=>x===v)){ if(o[key]==null) o[key]=v; } break; }
+      if(l.startsWith(lab+" ")||l.startsWith(lab+"\t")||l.startsWith(lab+":")){ if(o[key]==null) o[key]=l.slice(lab.length).replace(/^[\s:：]+/,""); break; }
+    }
+  }
+  const r={};
+  const TY=/^(빌라\/연립|아파트|오피스텔|단독\/다가구|다세대|연립|빌라|상가주택|단독|다가구|상가|토지|건물|재개발|재건축|아파트 분양권|분양권)(?=\s*\d{4}|\s*\||\s*$)/;
+  const tl=lines.find(l=>TY.test(l)); r.ptype=(tl?tl.match(TY)[1]:"").replace("빌라/연립","빌라").replace("단독/다가구","단독").replace("아파트 분양권","분양권");
+  r.deal=(flat.match(/(?:^|\s)(매매|전세|월세)\s+\d/)||[,""])[1]||(o.price?"매매":"");
+  if(o.price) r.price=toMan(o.price);
+  else { const m=flat.match(/(?:매매|전세)\s+([\d.]+\s*억(?:\s*[\d,]+)?)/); if(m) r.price=toMan(m[1]); }
+  if(o.rent) r.rent=toMan(o.rent)||+String(o.rent).replace(/[^\d]/g,"");
+  if(o.deposit) r.deposit=toMan(o.deposit);
+  if(o.loan) r.loan=toMan(o.loan);
+  if(o.mgmt) r.mgmt=String(o.mgmt).replace(/\s+/g,"");
+  const num=v=>{ const m=String(v||"").match(/([\d.]+)\s*(평|㎡|m²|m2|제곱미터)?/); return m?{v:+m[1],u:m[2]||""}:null; };
+  const toM2=x=>x?(x.u==="평"?P2M(x.v):x.v):"";
+  // 매물 소개에 ㎡ 숫자가 있으면 그걸 먼저 (평 환산보다 정확)
+  const intro=(m=>m?m[1]:"")(flat.match(/전용\s*면적\s*([\d.]+)\s*(?:제곱미터|㎡|m²|m2)/));
+  const introLand=(m=>m?m[1]:"")(flat.match(/대지\s*지분\s*([\d.]+)\s*(?:제곱미터|㎡|m²|m2)/));
+  r.supply=toM2(num(o.supplyP)); r.area=intro?+intro:toM2(num(o.areaP)); r.land=introLand?+introLand:toM2(num(o.landP)); r.gfa=toM2(num(o.gfaP));
+  if(r.supply) r.pyeong=Math.round(r.supply/3.3058)+"평";
+  if(o.floor) r.floor=String(o.floor).replace(/\s+/g,"");
+  if(o.rooms) r.rooms=String(o.rooms).replace(/개$/,"");
+  if(o.dir) r.dir=(DIRS.find(d=>String(o.dir).includes(d))||String(o.dir).replace(/\(.*?\)\s*/,""));
+  ["parking","moveIn","violation","usage","households"].forEach(k=>{ if(o[k]) r[k]=String(o[k]).trim(); });
+  if(o.builtDate){ const d=findDates(o.builtDate)[0]; r.builtDate=d?d.d:String(o.builtDate).trim(); }
+  if(o.articleNo) r.articleNo=String(o.articleNo).replace(/[^\d]/g,"");
+  if(o.address){ r.address=String(o.address).replace(/^서울(특별)?시\s*/,"").trim(); const rg=r.address.match(/^([가-힣]+구\s*[가-힣0-9]+(?:동|가))/); if(rg) r.region=rg[1]; }
+  const zm=flat.match(/([가-힣]{1,6})\s?(\d{1,3})\s?구역/); if(zm) r.zone=`${zm[1]}${zm[2]}구역`;
+  const cf=flat.match(/확인매물\s*([\d.\s]+)/); if(cf){ const d=findDates(cf[1].replace(/\s/g,""))[0]; if(d) r.confirmed=d.d; }
+  const pi=lines.findIndex(l=>/^(매매|전세|월세)\s+[\d,.]+\s*억?/.test(l));
+  const first=(pi>0&&/[가-힣]/.test(lines[pi-1])&&!/보기|지도|이미지/.test(lines[pi-1])?lines[pi-1]:"")||lines.find(l=>/^[가-힣0-9]+(동|가)\s+[가-힣/]+$/.test(l));
+  r.complex=(first||r.region||"").slice(0,30);
+  // 매물 소개 (중개사 연락처 뺀 나머지)
+  const ia=lines.findIndex(l=>l==="매물 소개"), ib=lines.findIndex((l,i)=>i>ia&&/최초게재|허위 매물|건축물 정보/.test(l));
+  if(ia>=0) r.memo=lines.slice(ia+1,ib>ia?ib:ia+12).filter(l=>!/^\d[.)]?\s*(매가|매매|전세|실투자금|전용면적|대지지분)/.test(l)).join(" / ").slice(0,300);
+  r.title=(lines.find(l=>/구역|룸|매매|급매|투자/.test(l)&&l.length<40&&!/^매매\s+\d/.test(l))||"");
+  if(agent) r.srcAgent=agent+(agentTel?" "+agentTel:"");
+  r.status="광고중";
+  return r;
+}
+
+/* ---------- 재개발 구역 정보 (조합원 분양가·비례율·단계) ---------- */
+const K_Z="mm-zones-v1";
+let ZONES=(()=>{ try{ return JSON.parse(localStorage.getItem(K_Z)||"null") }catch(e){ return null } })()||{
+  // 빌딩누나 신당10구역 자료 기준 (중구청 추정분담금 검증위원회·사업계획, 추정비례율 111.4%)
+  "신당10구역":{stage:"조합설립인가",households:"1,423",ratio:111.4,source:"중구청 추정분담금 검증위원회 및 사업계획 · 추정비례율 111.4% 기준 / 향후 사업시행·관리처분 및 공사비에 따라 변동 가능",
+    prices:[[39,17,49000,51000],[49,21,61000,63000],[59,25,75000,78000],[84,34,100000,103000],[114,45,135000,140000]]}
+};
+const saveZones=()=>{ try{ localStorage.setItem(K_Z,JSON.stringify(ZONES)) }catch(e){} };
+const zoneOf=n=>ZONES[n]||{stage:"",households:"",ratio:"",source:"",prices:[]};
+const eok=v=>v?(v/10000).toFixed(1).replace(/\.0$/,"")+"억":"-";
+const rights=r=>{ if(+r.estRights) return +r.estRights; const z=zoneOf(r.zone); const base=+r.appraisal||+r.estAppraisal; return base&&+z.ratio?Math.round(base*z.ratio/100):0; };
+function zoneInfoHtml(name){
+  const z=zoneOf(name);
+  return `<div class="zinfo"><div class="zinfo-h"><b>${esc(name)} 추정 조합원 분양가</b><span class="note">${esc(z.source||"구역 정보를 넣으면 추정분담금 시뮬레이션이 나와요")}</span>
+    <button type="button" class="linkbtn" data-zedit="${esc(name)}">구역 정보 ${z.prices.length?"고치기":"넣기"}</button></div>
+    ${z.prices.length?`<div class="zgrid">${z.prices.map(([a,p,lo,hi])=>`<div><b>전용 ${a}㎡</b><span>${p}평형</span><span>약 ${eok(lo)}~${eok(hi).replace("억","")}억</span></div>`).join("")}</div>`:""}
+    ${z.stage||z.households?`<div class="note" style="padding:0 14px 12px">사업단계 ${esc(z.stage||"-")} · 건립 ${esc(z.households||"-")}세대${z.ratio?` · 추정비례율 ${esc(z.ratio)}%`:""}</div>`:""}</div>`;
+}
+function editZone(name){
+  const z=zoneOf(name), sheet=$("#sheet");
+  sheet.innerHTML=`<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(name)} 구역 정보"><h2><span>${esc(name)} 구역 정보</span><button type="button" class="x" aria-label="닫기">×</button></h2>
+    <div class="grid2"><div class="field"><label for="z_stage">사업단계</label><input id="z_stage" value="${esc(z.stage)}" placeholder="예: 조합설립인가"></div>
+    <div class="field"><label for="z_hh">건립 총세대수</label><input id="z_hh" value="${esc(z.households)}" placeholder="예: 1,423"></div>
+    <div class="field"><label for="z_ratio">추정 비례율 (%)</label><input id="z_ratio" inputmode="decimal" value="${esc(z.ratio)}" placeholder="예: 111.4"></div></div>
+    <div class="field"><label for="z_src">자료 출처·설명</label><input id="z_src" value="${esc(z.source)}" placeholder="예: 중구청 추정분담금 검증위원회 자료 기준"></div>
+    <div class="field"><label for="z_prices">조합원 분양가 (한 줄에 하나: 전용㎡ 평형 최저억 최고억)</label>
+    <textarea id="z_prices" rows="6" placeholder="39 17 4.9 5.1&#10;59 25 7.5 7.8&#10;84 34 10.0 10.3">${z.prices.map(([a,p,lo,hi])=>`${a} ${p} ${lo/10000} ${hi/10000}`).join("\n")}</textarea></div>
+    <div class="btns"><button type="button" class="btn pri" id="zsave">저장</button></div></div>`;
+  sheet.hidden=false; const close=()=>{ sheet.hidden=true; sheet.innerHTML=""; };
+  sheet.querySelector(".x").onclick=close; sheet.onclick=e=>{ if(e.target===sheet) close(); };
+  $("#zsave").onclick=()=>{ const prices=$("#z_prices").value.split("\n").map(l=>l.trim().split(/[\s,~]+/).map(Number)).filter(x=>x.length>=4&&x.every(v=>v>0)).map(([a,p,lo,hi])=>[a,p,Math.round(lo*10000),Math.round(hi*10000)]);
+    ZONES[name]={stage:$("#z_stage").value.trim(),households:$("#z_hh").value.trim(),ratio:+$("#z_ratio").value||"",source:$("#z_src").value.trim(),prices}; saveZones(); close(); toast("구역 정보를 저장했어요"); renderListings(); };
+}
+
+/* ---------- 매물 상세 (구역별 보기에서 누르면) ---------- */
+function zWarn(r){
+  const w=[];
+  const y=+(String(r.builtDate||"").match(/(20\d{2})/)||[])[1];
+  if(r.zone&&y>=2019) w.push(`${y}년 사용승인 신축이에요. 이 구역의 권리산정기준일 이후 지어진 건물이면 입주권 없이 현금청산될 수 있어요. 조합·구청에 권리산정기준일과 분양대상 여부를 꼭 확인하세요.`);
+  if(/주택수\s*제외|취득세\s*감면|양도세\s*중과\s*배제/.test(r.memo||"")) w.push("광고의 '주택수 제외·취득세 감면·양도세 중과 배제'는 소형 신축 특례 요건(전용면적·취득가·준공 시기·취득 기한)을 모두 갖춰야 적용돼요. 세무사 확인 전에는 손님께 단정해서 안내하지 마세요.");
+  if(r.violation&&!/해당\s*없음|없음/.test(r.violation)) w.push("위반건축물이 있어요. 이행강제금과 분양자격 영향을 확인하세요.");
+  return w;
+}
+function openZDetail(id){
+  const r=LIST.find(x=>x.id===id); if(!r) return;
+  const c=calcL(r), z=zoneOf(r.zone), rv=rights(r), sheet=$("#sheet");
+  const cell=(k,v,cls)=>`<div class="zd${cls?" "+cls:""}"><span>${k}</span><b>${v||"-"}</b></div>`;
+  const sim=rv&&z.prices.length?`<div class="zsim"><b>현재 추정분담금 시뮬레이션</b>
+    <div class="zsr"><span>추정권리가액 기준</span><b>${rv.toLocaleString("ko-KR")}만원</b></div>
+    ${z.prices.filter(p=>[59,84,114].includes(p[0])||z.prices.length<=4).map(([a,,lo,hi])=>`<div class="zsr"><span>전용 ${a}㎡ 신청</span><b>추가분담금 예상 ${won(lo-rv)} ~ ${won(hi-rv)}</b></div>`).join("")}
+    ${(()=>{ const a=z.prices.find(p=>p[0]===84), b=z.prices.find(p=>p[0]===59); return a&&b?`<div class="zsr"><span>1+1 (84㎡+59㎡)</span><b>추가분담금 예상 ${won(a[2]+b[2]-rv)} ~ ${won(a[3]+b[3]-rv)}</b></div>`:""; })()}
+    <p class="note">현재 추정 조합원 분양가 범위를 적용한 단순 시뮬레이션이에요. 실제 분담금은 관리처분계획, 공사비, 평형배정, 정산기준에 따라 달라질 수 있어요.</p></div>`
+    :`<div class="note">${r.zone?`종전자산가액(감정가)과 구역 비례율·분양가를 넣으면 추정분담금 시뮬레이션이 나와요.`:"재개발 구역을 넣으면 구역 정보가 함께 나와요."}</div>`;
+  const W=zWarn(r);
+  sheet.innerHTML=`<div class="sheet zsheet" role="dialog" aria-modal="true" aria-label="매물 상세">
+    <h2><span>${esc(r.zone||"매물")} ${LIST.filter(x=>x.zone===r.zone).indexOf(r)+1}번 매물</span><button type="button" class="x" aria-label="닫기">×</button></h2>
+    <div class="zprice">${r.price?won(r.price)+"원":"가격 미입력"}<small>${esc([r.ptype,r.usage].filter(Boolean).join(" · "))}${r.title?` · ${esc(r.title)}`:""}</small></div>
+    <div class="zaddr"><b>${esc(r.address||r.region||"주소 미입력")}</b>${r.address?`<a href="https://map.naver.com/p/search/${encodeURIComponent((r.address.startsWith("서울")?"":"서울 ")+r.address)}" target="_blank" rel="noopener">네이버지도 ↗</a>`:""}</div>
+    <div class="zdg">
+      ${cell("받은날짜",esc(r.added))}${cell("광고날짜",esc(r.confirmed))}
+      ${cell("전용면적",r.area?`${esc(r.area)}㎡ (${(r.area/3.3058).toFixed(2)}평)`:"")}${cell("대지지분",r.land?`${esc(r.land)}㎡ (${(r.land/3.3058).toFixed(2)}평)`:"")}
+      ${r.gfa?cell("연면적",`${esc(r.gfa)}㎡ (${(r.gfa/3.3058).toFixed(2)}평)`):cell("공급면적",r.supply?`${esc(r.supply)}㎡ (${esc(r.pyeong||"")})`:"")}${cell("층 · 방/욕실",esc([r.floor,r.rooms&&r.rooms+"(방/욕)"].filter(Boolean).join(" · ")))}
+      ${cell("사업단계",esc(z.stage))}${cell("건립총세대수",z.households?esc(z.households)+"세대":"")}
+      ${cell("소유주",esc(r.ownerName))}${cell("위반건축물",esc(r.violation))}
+      ${cell("사용승인일",esc(r.builtDate))}${cell("건물 세대수 · 주차",esc([r.households,r.parking&&"주차 "+r.parking].filter(Boolean).join(" · ")))}
+      ${cell("프리미엄",c.premium!==""?won(c.premium)+"원":"","em")}${cell("실투자금",c.invest!==""?won(c.invest)+"원":"","em")}
+      ${cell("보증금(승계)",r.deposit?won(r.deposit)+"원":"")}${cell("월세",r.rent?r.rent+"만원":"")}
+      ${cell("종전자산가액",r.appraisal?(+r.appraisal*10000).toLocaleString("ko-KR")+"원":"")}${cell("추정권리가액",rv?(rv*10000).toLocaleString("ko-KR")+"원":"")}
+    </div>
+    ${W.map(t=>`<div class="zwarn">${esc(t)}</div>`).join("")}
+    ${r.memo?`<div class="zmemo"><b>매물 소개</b><p>${esc(r.memo)}</p></div>`:""}
+    ${sim}
+    ${r.srcAgent?`<p class="note">원 광고: ${esc(r.srcAgent)} (우리 사무소 매물 아님 · 공동중개 확인용)</p>`:""}
+    <div class="zbtns">${r.ownerTel?`<a class="btn" href="tel:${esc(r.ownerTel.replace(/[^\d]/g,""))}">☎ ${esc(r.ownerTel)}</a>`:`<button type="button" class="btn" disabled>☎ 번호 미입력</button>`}${r.articleNo?`<a class="btn nv" href="${naverUrl(r.articleNo)}" target="_blank" rel="noopener">N 네이버 매물</a>`:`<button type="button" class="btn" disabled>N 매물번호 없음</button>`}</div>
+    <button type="button" class="btn" id="zcopy">📋 손님용 내용 복사</button>
+    <button type="button" class="linkbtn" id="zedit">이 매물 정보 고치기 (표로 보기에서 칸을 눌러 고칠 수 있어요)</button>
+  </div>`;
+  sheet.hidden=false; const close=()=>{ sheet.hidden=true; sheet.innerHTML=""; };
+  sheet.querySelector(".x").onclick=close; sheet.onclick=e=>{ if(e.target===sheet) close(); };
+  $("#zcopy").onclick=()=>copy([`🏠 ${r.zone?r.zone+" ":""}${r.ptype||"매물"} ${r.deal||""} ${r.price?won(r.price)+"원":""}`,
+    r.address?`· 위치: ${r.address}`:"", r.area?`· 전용 ${r.area}㎡${r.land?` / 대지지분 ${r.land}㎡`:""}`:"", r.floor||r.rooms?`· ${[r.floor,r.rooms&&"방/욕실 "+r.rooms,r.dir].filter(Boolean).join(" · ")}`:"",
+    r.deposit?`· 승계 보증금 ${won(r.deposit)}원 → 실투자금 ${won(c.invest)}원`:"", c.premium!==""?`· 프리미엄 ${won(c.premium)}원`:"",
+    r.builtDate?`· 사용승인 ${r.builtDate}`:"", z.stage?`· 사업단계 ${z.stage}`:"", r.moveIn?`· 입주 ${r.moveIn}`:"",
+    "", "※ 권리·세금 내용은 계약 전 공부서류와 전문가 확인이 필요해요.", "", "문멘토프라퍼티 010.6336.1828 · 010.4336.5038"].filter((x,i,a)=>x!==""||a[i-1]!=="").join("\n"));
+  $("#zedit").onclick=()=>{ close(); lMode="table"; lFilter.q=r.address||r.complex||""; renderListings(); };
+}
+
 let lFilter={q:"",deal:"전체"}, lDraft=null, lMode="table", lZone=null, zmap=null, zOv=[];
 function renderListings(){
   const box=$("#view-listings");
   const rows=LIST.filter(x=>(lFilter.deal==="전체"||x.deal===lFilter.deal)&&(!lFilter.q||Object.values(x).join(" ").includes(lFilter.q)));
-  box.innerHTML=`<div><h1 class="view">매물 정리</h1><p class="lede" style="margin-top:4px">네이버 광고글, 카톡 메모, 엑셀에서 복사한 줄을 그대로 붙여넣으세요. 매물마다 나눠서 표로 정리하고, 엑셀로 받을 수 있어요.</p></div>
+  box.innerHTML=`<div><h1 class="view">매물 정리</h1><p class="lede" style="margin-top:4px">네이버 매물 화면을 통째로 복사해 붙여넣거나 <b>캡처를 올리세요</b>. 카톡 메모, 엑셀 줄도 돼요. 매물마다 나눠서 정리하고, 재개발 구역별로 모아 보여 줘요. 다른 중개사무소 연락처는 소유주 정보로 넣지 않아요.</p></div>
     <div class="out" style="background:#fff">
       <div class="field"><label for="lpaste">붙여넣기 (여러 매물은 빈 줄로 구분)</label>
       <textarea id="lpaste" placeholder="예)&#10;남산타운 6동 매매 14억 5,000 84/59㎡ 12/20층 남향 즉시입주&#10;&#10;신당푸르지오 전세 7억 전용 84㎡ 5층 2027년 1월 입주"></textarea></div>
-      <div class="btns"><button type="button" class="btn pri" id="lparse">정리하기</button><button type="button" class="btn" id="lai">AI로 정리 지시문</button></div>
+      <div class="btns"><button type="button" class="btn pri" id="lparse">정리하기</button><label class="btn" for="limg" style="cursor:pointer">📷 캡처 올리기</label><input type="file" id="limg" accept="image/*" multiple hidden><span id="limgp" class="note"></span><button type="button" class="btn" id="lai">AI로 정리 지시문</button></div>
       ${lDraft?`<div class="warn">${lDraft.length}건을 찾았어요. 맞는지 확인하고 <b>저장</b>을 눌러 주세요. 칸을 눌러 바로 고칠 수 있어요.</div>${lTable(lDraft,true)}<div class="btns"><button type="button" class="btn pri" id="lsave">${lDraft.length}건 저장</button><button type="button" class="btn" id="lcancel">취소</button></div>`:""}
     </div>
     <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -180,10 +333,16 @@ function lTable(rows,draft){
 }
 function cellVal(k,txt){ txt=txt.trim(); if(k==="rent") return toMan(txt)||(+txt.replace(/[^\d]/g,"")||""); if(L_MONEY.includes(k)) return toMan(txt)||txt; return txt; }
 function bindL(rows){
-  $("#lparse").onclick=()=>{ const t=$("#lpaste").value; const bl=splitBlocks(t); if(!bl.length){ toast("붙여넣은 내용이 없어요"); return; } lDraft=bl.map(parseListing); renderListings(); };
+  $("#lparse").onclick=()=>{ const t=$("#lpaste").value; const bl=isNaver(t)?splitNaver(t):splitBlocks(t); if(!bl.length){ toast("붙여넣은 내용이 없어요"); return; } lDraft=bl.map(parseListing); renderListings(); };
   $("#lai").onclick=()=>copy(`아래 부동산 매물 글을 매물마다 나눠서, 매물 하나당 아래 형식으로만 써 줘. 매물 사이는 빈 줄 하나. 모르는 칸은 비워 둬. 숫자는 지어내지 마.\n\n단지: \n동호: \n지역: (예: 중구 신당동)\n유형: (아파트/오피스텔/빌라 등)\n거래: (매매/전세/월세)\n가격: (매매가 또는 보증금, 예: 14억 5000)\n월세: (만원)\n공급: (㎡)\n전용: (㎡)\n층: (예: 12/20층)\n향: \n방/욕실: \n입주: \n매물번호: \n확인일: \n메모: \n\n[매물 글]\n${$("#lpaste").value||"(여기에 붙여넣기)"}`);
   const draftSave=()=>{ document.querySelectorAll("#view-listings tr[data-lid] td[data-k]").forEach(td=>{ const id=td.parentElement.dataset.lid; const arr=lDraft&&lDraft.find(x=>x.id===id)?lDraft:LIST; const r=arr.find(x=>x.id===id); if(r) r[td.dataset.k]=cellVal(td.dataset.k,td.textContent); }); };
-  if($("#lsave")) $("#lsave").onclick=()=>{ draftSave(); LIST=LIST.concat(lDraft); lDraft=null; store(K_L,LIST); $("#lpaste").value=""; toast("저장했어요"); renderListings(); };
+  $("#limg").onchange=async e=>{ const files=[...e.target.files]; if(!files.length) return; const pr=$("#limgp"); let all="";
+    try{ for(const [i,f] of files.entries()){ all+=await fileToText(f,m=>{ pr.textContent=`캡처 ${i+1}/${files.length} ${m}`; })+"\n"; } }
+    catch(err){ pr.textContent=""; toast(err.message||"글자를 읽지 못했어요"); return; }
+    pr.textContent=""; const ta=$("#lpaste"); ta.value=(ta.value?ta.value+"\n\n":"")+all.trim();
+    const t=ta.value; const bl=isNaver(t)?splitNaver(t):splitBlocks(t); if(!bl.length){ toast("캡처에서 글자를 찾지 못했어요"); return; }
+    lDraft=bl.map(parseListing); const keep=ta.value; renderListings(); $("#lpaste").value=keep; toast("캡처를 읽었어요. 확인하고 저장해 주세요"); };
+  if($("#lsave")) $("#lsave").onclick=()=>{ draftSave(); const z=lDraft.find(x=>x.zone); LIST=LIST.concat(lDraft); lDraft=null; store(K_L,LIST); $("#lpaste").value=""; toast("저장했어요"); if(z){ lMode="zone"; lZone=z.zone; } renderListings(); };
   if($("#lcancel")) $("#lcancel").onclick=()=>{ lDraft=null; renderListings(); };
   document.querySelectorAll("#view-listings [data-ld]").forEach(b=>b.onclick=()=>{ lFilter.deal=b.dataset.ld; renderListings(); });
   document.querySelectorAll("#view-listings [data-lm]").forEach(b=>b.onclick=()=>{ lMode=b.dataset.lm; renderListings(); });
@@ -196,36 +355,43 @@ function bindL(rows){
   $("#lcopy").onclick=()=>copy(rows.map((r,i)=>`${i+1}. ${r.complex}${r.dongho?" "+r.dongho:""} (${r.region||""})\n   ${r.deal} ${r.price?won(r.price):""}${r.rent?" / 월 "+r.rent+"만":""} · ${r.area?"전용 "+r.area+"㎡":""}${r.pyeong?" ("+r.pyeong+")":""} · ${r.floor} ${r.dir}${r.moveIn?" · "+r.moveIn:""}`).join("\n")+"\n\n문멘토프라퍼티 010.6336.1828 · 010.4336.5038");
 }
 
-/* ---------- 재개발 구역별 보기 ---------- */
+/* ---------- 재개발 구역별 보기 (표 목록 → 누르면 상세) ---------- */
+let zF={q:"",st:"전체",min:"",max:""};
 function renderZone(rows){
   const groups={}; rows.forEach(r=>{ const z=r.zone||"구역 미지정"; (groups[z]=groups[z]||[]).push(r); });
+  Object.keys(ZONES).forEach(z=>{ if(!groups[z]) groups[z]=[]; });
   const names=Object.keys(groups).sort((a,b)=>(a==="구역 미지정")-(b==="구역 미지정")||groups[b].length-groups[a].length);
   if(!lZone||!groups[lZone]) lZone=names[0];
-  const G=groups[lZone]||[];
+  const all=groups[lZone]||[];
+  const G=all.filter(r=>{ const p=+r.price||0;
+    return (!zF.q||[r.address,r.ownerName,r.ownerTel,r.complex,r.memo].join(" ").includes(zF.q))&&(zF.st==="전체"||(r.status||"광고중")===zF.st)
+      &&(!zF.min||p>=zF.min*10000)&&(!zF.max||p<=zF.max*10000); });
   const C=G.map(r=>({r,...calcL(r)}));
   const nums=k=>C.map(x=>+x[k]).filter(v=>v>0);
   const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):0;
   const minInv=nums("invest").length?Math.min(...nums("invest")):0;
+  const ST=["광고중","협의중","보류","거래완료"];
+  const stPill=s=>`<span class="zst zst-${ST.indexOf(s||"광고중")}">${esc(s||"광고중")}</span>`;
   $("#zoneBox").innerHTML=`<div class="chips">${names.map(z=>`<button type="button" class="chip ${z===lZone?"on":""}" data-zone="${esc(z)}">${esc(z)} <span class="num">${groups[z].length}</span></button>`).join("")}</div>
+    ${lZone!=="구역 미지정"?zoneInfoHtml(lZone):""}
     <div class="stats stats4"><div class="stat"><b>${G.length}</b><span>매물</span></div><div class="stat"><b>${avg(nums("premium"))?won(avg(nums("premium"))):"-"}</b><span>평균 프리미엄</span></div><div class="stat"><b>${minInv?won(minInv):"-"}</b><span>최저 실투자금</span></div><div class="stat"><b>${avg(C.map(x=>+x.r.price).filter(v=>v>0))?won(avg(C.map(x=>+x.r.price).filter(v=>v>0))):"-"}</b><span>평균 매매가</span></div></div>
+    <div class="zfil"><input id="zq" type="search" placeholder="주소·조합원·집주인 검색" value="${esc(zF.q)}">
+      <select id="zst" aria-label="광고상태"><option>전체</option>${ST.map(s=>`<option ${zF.st===s?"selected":""}>${s}</option>`).join("")}</select>
+      <input id="zmin" inputmode="decimal" placeholder="최소 매매가(억)" value="${esc(zF.min)}"><input id="zmax" inputmode="decimal" placeholder="최대 매매가(억)" value="${esc(zF.max)}"></div>
+    <div class="tbl ztbl"><table><thead><tr><th>No.</th><th>구분</th><th>받은날짜</th><th>광고</th><th>주소</th><th>전용</th><th>대지</th><th>조합원명</th><th>위반</th><th style="text-align:right">매매</th><th style="text-align:right">프리미엄</th><th style="text-align:right">실투</th><th style="text-align:right">보증금</th><th style="text-align:right">월세</th></tr></thead><tbody>
+    ${C.length?C.map((x,i)=>{ const r=x.r; return `<tr data-zid="${r.id}" tabindex="0"><td>${i+1}</td><td>${esc(r.ptype||"-")}</td><td class="num">${esc(r.added||"")}</td><td>${stPill(r.status)}</td><td>${esc(r.address||r.complex||"-")}</td>
+      <td class="n">${r.area?(r.area/3.3058).toFixed(2)+"평":"-"}</td><td class="n">${r.land?(r.land/3.3058).toFixed(2)+"평":"-"}</td><td>${esc(r.ownerName||"-")}</td><td>${r.violation?(/없음/.test(r.violation)?"해당없음":"해당"):"-"}</td>
+      <td class="n strong">${r.price?won(r.price)+"원":"-"}</td><td class="n">${x.premium!==""?won(x.premium)+"원":"미입력"}</td><td class="n">${x.invest!==""?won(x.invest)+"원":"미입력"}</td><td class="n">${r.deposit?won(r.deposit)+"원":"0원"}</td><td class="n">${r.rent?r.rent+"만원":"0원"}</td></tr>`; }).join("")
+      :`<tr><td colspan="14" class="note" style="text-align:center;padding:18px">${all.length?"조건에 맞는 매물이 없어요":"이 구역 매물이 아직 없어요. 위에서 네이버 매물 화면을 붙여넣거나 캡처를 올려 주세요."}</td></tr>`}</tbody></table></div>
     <div id="zmap" class="zmap"><div class="note" style="padding:12px">지도를 불러오는 중이에요…</div></div>
-    <div class="zcards">${C.map((x,i)=>{ const r=x.r; return `<article class="zcard" data-zid="${r.id}">
-      <header><span class="no">${i+1}</span><div><b>${esc(r.complex||r.address||"이름 없음")}${r.dongho?" "+esc(r.dongho):""}</b><div class="note">${esc(r.address||r.region||"")}${r.ptype?" · "+esc(r.ptype):""}${r.area?" · 전용 "+esc(r.area)+"㎡":""}${r.pyeong?" ("+esc(r.pyeong)+")":""}</div></div><span class="pill">${esc(r.deal||"")}</span></header>
-      <dl class="zkv">
-        <dt>매매가</dt><dd class="num big">${r.price?won(r.price):"-"}</dd>
-        <dt>감정가</dt><dd class="num">${r.appraisal?won(r.appraisal):"-"}</dd>
-        <dt>추정감정가</dt><dd class="num">${r.estAppraisal?won(r.estAppraisal):"-"}</dd>
-        <dt>프리미엄</dt><dd class="num strong">${x.premium!==""?won(x.premium):"-"}${x.premium!==""&&!r.appraisal&&r.estAppraisal?' <small>(추정 기준)</small>':""}</dd>
-        <dt>승계 보증금</dt><dd class="num">${r.deposit?won(r.deposit):"-"}${r.rent?` / 월 ${esc(r.rent)}만`:""}</dd>
-        <dt>실투자금</dt><dd class="num strong">${x.invest!==""?won(x.invest):"-"}</dd>
-        <dt>소유주</dt><dd>${esc(r.ownerName||"-")}${r.ownerTel?` · <a href="tel:${esc(r.ownerTel.replace(/[^\d]/g,""))}">${esc(r.ownerTel)}</a>`:""}</dd>
-      </dl>
-      ${r.memo?`<p class="note" style="margin:0">${esc(r.memo)}</p>`:""}
-      <div class="btns">${r.articleNo?`<a class="btn" href="${naverUrl(r.articleNo)}" target="_blank" rel="noopener">네이버 매물 ${esc(r.articleNo)}</a>`:""}<button type="button" class="btn" data-zfocus="${r.id}">지도에서 보기</button>${r.ownerTel?`<a class="btn" href="sms:${esc(r.ownerTel.replace(/[^\d]/g,""))}">문자</a>`:""}</div>
-    </article>`; }).join("")}</div>
-    <p class="note">프리미엄 = 매매가 − 감정가(없으면 추정감정가), 실투자금 = 매매가 − 승계 보증금이에요. 감정가는 조합 통지 금액으로 꼭 확인하세요. 표로 보기에서 칸을 눌러 감정가·성함 등을 고칠 수 있어요.</p>`;
+    <p class="note">줄을 누르면 상세 정보가 나와요. 프리미엄 = 매매가 − 종전자산가액(감정가, 없으면 추정감정가), 실투자금 = 매매가 − 승계 보증금이에요. 감정가는 조합 통지 금액으로 꼭 확인하세요.</p>`;
   document.querySelectorAll("[data-zone]").forEach(b=>b.onclick=()=>{ lZone=b.dataset.zone; renderZone(rows); });
-  document.querySelectorAll("[data-zfocus]").forEach(b=>b.onclick=()=>{ const o=zOv.find(z=>z.id===b.dataset.zfocus); if(o&&zmap){ zmap.setCenter(o.pos); zmap.setLevel(2); $("#zmap").scrollIntoView({behavior:"smooth",block:"center"}); } else toast("이 매물은 위치를 못 찾았어요. 주소(지번)를 넣어 주세요"); });
+  document.querySelectorAll("[data-zedit]").forEach(b=>b.onclick=()=>editZone(b.dataset.zedit));
+  document.querySelectorAll(".ztbl tr[data-zid]").forEach(tr=>{ tr.onclick=()=>openZDetail(tr.dataset.zid); tr.onkeydown=e=>{ if(e.key==="Enter") openZDetail(tr.dataset.zid); }; });
+  const re=()=>{ renderZone(rows); };
+  const zq=$("#zq"); zq.oninput=()=>{ zF.q=zq.value.trim(); clearTimeout(zq._t); zq._t=setTimeout(()=>{ re(); const n=$("#zq"); n.focus(); n.setSelectionRange(n.value.length,n.value.length); },300); };
+  $("#zst").onchange=e=>{ zF.st=e.target.value; re(); };
+  ["zmin","zmax"].forEach(id=>{ $("#"+id).onchange=e=>{ zF[id==="zmin"?"min":"max"]=e.target.value.trim(); re(); }; });
   drawZoneMap(G);
 }
 async function drawZoneMap(G){
@@ -244,7 +410,7 @@ async function drawZoneMap(G){
     const p=await find(r); if(!p) continue;
     if(!r.lat){ r.lat=p[0]; r.lng=p[1]; changed=true; }
     const el=document.createElement("div"); el.className="ap"; el.innerHTML=`<b>${i+1}</b><span class="tag">${esc((r.complex||r.address||"").slice(0,12))}${r.price?" "+esc(won(r.price)):""}</span>`;
-    el.onclick=()=>{ const c=document.querySelector(`[data-zid="${r.id}"]`); if(c){ c.scrollIntoView({behavior:"smooth",block:"center"}); c.classList.add("flash"); setTimeout(()=>c.classList.remove("flash"),1200); } };
+    el.onclick=()=>openZDetail(r.id);
     const pos=new K.LatLng(p[0],p[1]); new K.CustomOverlay({map:zmap,position:pos,content:el,yAnchor:1,clickable:true}); zOv.push({id:r.id,pos}); pts.push(pos);
   }
   if(changed) store(K_L,LIST);

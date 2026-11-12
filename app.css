@@ -239,3 +239,34 @@ label.btn{cursor:pointer}
 .say .btns{margin-top:8px}
 .chip.miss{color:var(--faint);border-style:dashed}
 details.manual summary{cursor:pointer;color:var(--muted);font-size:14px;padding:6px 0}
+
+/* 재개발 구역: 조합원 분양가 · 표 · 상세 */
+.zinfo{border:1px solid var(--line);border-radius:var(--r);background:#fff;overflow:hidden}
+.zinfo-h{padding:14px;background:#f5f8fc;display:flex;flex-direction:column;gap:4px}
+.zinfo-h b{font-size:17px}.zinfo-h .linkbtn{align-self:flex-start}
+.zgrid{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
+.zgrid>div{display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 6px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+.zgrid>div:nth-child(odd){border-right:1px solid var(--line)}.zgrid b{color:var(--ink);font-size:15px}
+.zfil{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.zfil input,.zfil select{width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;background:#fff}
+.ztbl{max-height:70vh}.ztbl table{font-size:13.5px}.ztbl th,.ztbl td{white-space:nowrap}
+.ztbl tbody tr{cursor:pointer}.ztbl tbody tr:hover td,.ztbl tbody tr:focus td{background:#f3f7fd}
+.zst{display:inline-block;padding:2px 9px;border-radius:12px;font-size:12px;font-weight:700;background:#fdf1d6;color:#8a5a00}
+.zst-1{background:#e3ecf8;color:#2f5f9e}.zst-2{background:#eee;color:#666}.zst-3{background:#e1eee8;color:#1d5c47}
+.zsheet h2{font-size:18px}
+.zprice{font-size:32px;font-weight:800;color:#13233a;display:flex;flex-direction:column;line-height:1.2}
+.zprice small{font-size:13px;font-weight:500;color:var(--muted);margin-top:4px}
+.zaddr{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#f5f7fa;border-radius:12px;padding:14px}
+.zaddr a{color:#2f5f9e;font-weight:600;font-size:13px;white-space:nowrap;text-decoration:none}
+.zdg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.zd{background:#f5f7fa;border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.zd span{font-size:12px;color:var(--muted)}.zd b{font-size:15px;overflow-wrap:anywhere}.zd.em b{color:#1d5c47}
+.zwarn{background:#fdf6e3;border:1px solid #ecd9a6;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55;color:#6b5210}
+.zmemo{background:#f5f7fa;border-radius:12px;padding:10px 12px;font-size:13.5px}.zmemo p{margin:4px 0 0;line-height:1.55}
+.zsim{border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;background:#fafbfd}
+.zsr{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;border-bottom:1px dashed var(--line);padding:4px 0}
+.zsr span{color:var(--muted)}.zsr b{text-align:right}
+.zbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.zbtns .btn{justify-content:center;text-align:center}
+.zbtns .nv{background:#03c75a;border-color:#03c75a;color:#fff}
+@media (max-width:420px){.zdg{grid-template-columns:1fr 1fr}.zprice{font-size:28px}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
