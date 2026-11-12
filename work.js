@@ -156,11 +156,12 @@ function finishL(o,raw){ o.id=uid(); o.raw=raw; o.added=TODAY(); L_COLS.forEach(
 /* ---------- 네이버 매물 상세 화면(복사·캡처) 읽기 ---------- */
 // 네이버 부동산 매물 페이지를 통째로 복사하거나 캡처 글자 인식한 내용을 매물 한 건으로 정리한다.
 // 다른 중개사무소 정보(중개사 영역, ***** 사이 연락처)는 소유주 정보로 쓰지 않고 '원 광고 중개사'로만 남긴다.
-const NV_KEYS=[["매매가","price"],["전세가","price"],["보증금","price"],["월세","rent"],["기전세금","deposit"],["융자금","loan"],["관리비","mgmt"],["공급면적","supplyP"],["계약면적","supplyP"],["전용면적","areaP"],["대지지분","landP"],["연면적","gfaP"],["해당층/총층","floor"],["방수/욕실수","rooms"],["향","dir"],["주차가능여부","parking"],["입주가능일","moveIn"],["위반건축물 여부","violation"],["위반건축물여부","violation"],["매물번호","articleNo"],["건축물용도","usage"],["사용승인일","builtDate"],["세대수","households"],["위치","address"]];
+const NV_KEYS=[["매매가","price"],["전세가","price"],["보증금","price"],["월세","rent"],["기전세금","deposit"],["융자금","loan"],["관리비","mgmt"],["공급면적","supplyP"],["계약면적","supplyP"],["전용면적","areaP"],["대지지분","landP"],["대지면적","landP"],["연면적","gfaP"],["해당층/총층","floor"],["지상층/지하층","floor"],["주구조","structure"],["방수/욕실수","rooms"],["향","dir"],["주차가능여부","parking"],["입주가능일","moveIn"],["위반건축물 여부","violation"],["위반건축물여부","violation"],["매물번호","articleNo"],["건축물용도","usage"],["사용승인일","builtDate"],["세대수","households"],["위치","address"]];
 const NV_NOISE=/도움말\s*보기|도움말|면적\s*단위\s*변경\s*㎡?|상세보기|지도보기|상세내용\s*(보기|숨기기)/g;
 const isNaver=t=>{ const n=["기본 정보","매물번호","공급면적","전용면적","해당층/총층","확인매물","방수/욕실수","기전세금"].filter(k=>t.includes(k)).length; return n>=3; };
 function splitNaver(t){ const parts=t.split(/(?=Npay 부동산 매물지도|네이버페이\s*(?:빌라|아파트|오피스텔|단독|상가|토지|건물))/).filter(x=>isNaver(x)); return parts.length>1?parts:[t]; }
 const P2M=p=>Math.round(p*3.3058*100)/100;
+const nvDate=v=>{const m=String(v||"").match(/(\d{4})\s*[.\-년]\s*(\d{1,2})\s*[.\-월]\s*(\d{1,2})/);return m?`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`:""};
 function parseNaver(t){
   t=t.replace(/\r/g,"");
   // 중개사 영역은 떼어 둠 (우리 매물 정보가 아님)
@@ -170,7 +171,7 @@ function parseNaver(t){
   const am=(tail+body).match(/([가-힣A-Za-z]+(?:공인중개사(?:사무소)?|부동산중개|부동산)(?:주식회사|\(주\))?)/); if(am) agent=am[1];
   // 매물 소개 안의 ***** 사이 연락처 블록 제거
   body=body.replace(/\*{5,}[\s\S]*?\*{5,}/g,m=>{ const a=m.match(/([가-힣A-Za-z]+공인중개사[가-힣]*)/); if(a&&!agent) agent=a[1]; const tel=m.match(/0\d{1,2}[-\s.]?\d{3,4}[-\s.]?\d{4}/); if(tel) agentTel=tel[0]; return "\n"; });
-  const lines=body.split("\n").map(x=>x.replace(NV_NOISE,"").trim()).filter(Boolean);
+  const lines=body.split("\n").map(x=>x.replace(/^\s*[*•·\-]\s+/,"").replace(NV_NOISE,"").trim()).filter(Boolean);
   const o={}; const flat=lines.join(" ");
   for(let i=0;i<lines.length;i++){
     const l=lines[i];
@@ -201,19 +202,21 @@ function parseNaver(t){
   if(o.rooms) r.rooms=String(o.rooms).replace(/개$/,"");
   if(o.dir) r.dir=(DIRS.find(d=>String(o.dir).includes(d))||String(o.dir).replace(/\(.*?\)\s*/,""));
   ["parking","moveIn","violation","usage","households"].forEach(k=>{ if(o[k]) r[k]=String(o[k]).trim(); });
-  if(o.builtDate){ const d=findDates(o.builtDate)[0]; r.builtDate=d?d.d:String(o.builtDate).trim(); }
+  if(o.builtDate){ r.builtDate=nvDate(o.builtDate)||((findDates(o.builtDate)[0]||{}).d)||String(o.builtDate).trim(); }
   if(o.articleNo) r.articleNo=String(o.articleNo).replace(/[^\d]/g,"");
   if(o.address){ r.address=String(o.address).replace(/^서울(특별)?시\s*/,"").trim(); const rg=r.address.match(/^([가-힣]+구\s*[가-힣0-9]+(?:동|가))/); if(rg) r.region=rg[1]; }
-  const zm=flat.match(/([가-힣]{1,6})\s?(\d{1,3})\s?구역/); if(zm) r.zone=`${zm[1]}${zm[2]}구역`;
-  const cf=flat.match(/확인매물\s*([\d.\s]+)/); if(cf){ const d=findDates(cf[1].replace(/\s/g,""))[0]; if(d) r.confirmed=d.d; }
+  const zm=flat.match(/([가-힣]{1,6}?)\s?(\d{1,3})\s?(?:구역|재개발|재건축|촉진)/); if(zm) r.zone=`${zm[1]}${zm[2]}구역`;
+  const cf=flat.match(/(?:확인매물|등록)\s*(\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2})/)||flat.match(/(\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2})\.?\s*최초게재/); if(cf) r.confirmed=nvDate(cf[1]);
   const pi=lines.findIndex(l=>/^(매매|전세|월세)\s+[\d,.]+\s*억?/.test(l));
   const first=(pi>0&&/[가-힣]/.test(lines[pi-1])&&!/보기|지도|이미지/.test(lines[pi-1])?lines[pi-1]:"")||lines.find(l=>/^[가-힣0-9]+(동|가)\s+[가-힣/]+$/.test(l));
   r.complex=(first||r.region||"").slice(0,30);
   // 매물 소개 (중개사 연락처 뺀 나머지)
   const ia=lines.findIndex(l=>l==="매물 소개"), ib=lines.findIndex((l,i)=>i>ia&&/최초게재|허위 매물|건축물 정보/.test(l));
   if(ia>=0) r.memo=lines.slice(ia+1,ib>ia?ib:ia+12).filter(l=>!/^\d[.)]?\s*(매가|매매|전세|실투자금|전용면적|대지지분)/.test(l)).join(" / ").slice(0,300);
-  r.title=(lines.find(l=>/구역|룸|매매|급매|투자/.test(l)&&l.length<40&&!/^매매\s+\d/.test(l))||"");
-  if(agent) r.srcAgent=agent+(agentTel?" "+agentTel:"");
+  r.title=(lines.find(l=>/구역|룸|급매|투자|재개발|갭/.test(l)&&l.length<60&&!/^(매매|전세|월세)\s+\d/.test(l)&&!/매물지도|평당가/.test(l))||"");
+  if(!r.memo&&r.title) r.memo=r.title;
+  if(o.structure) r.structure=String(o.structure);
+  if(agent&&!/문멘토/.test(agent)) r.srcAgent=agent+(agentTel?" "+agentTel:""); // 우리 사무소 광고면 원 광고 중개사로 넣지 않음
   r.status="광고중";
   return r;
 }
