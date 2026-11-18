@@ -140,6 +140,7 @@ MM.start = async function(){
   if(h){ const s=SUB.stations.find(x=>x.name===h.replace(/역$/,"")); if(s) selectStation(s); }
   renderPanel();
   if(/[?&]fill\b/.test(location.search)) fillAll();
+  openFromQuery();
 };
 /* 관리자용: 주소 끝에 ?fill 을 붙여 열면 서울 전체 단지 위치를 한 번에 찾고, 끝나면 geo.json 내려받기 */
 async function fillAll(){
@@ -439,6 +440,15 @@ function niceStep(x){ const p=10**Math.floor(Math.log10(x)); const f=x/p; return
 
 /* ---------- 검색 ---------- */
 function placeSearch(q){ return new Promise(res=>{ if(!ps) return res([]); try{ ps.keywordSearch(q,(d,st)=>res(st===kakao.maps.services.Status.OK?d:[]),{size:8}); }catch(e){ res([]); } }); }
+/* 주소 끝 ?q=검색어 로 열면 그 단지·역·장소로 바로 이동 (중개노트 [카카오 지도에서 보기]에서 사용) */
+async function openFromQuery(){
+  const q=(new URLSearchParams(location.search).get("q")||"").trim().slice(0,60);
+  if(!q) return;
+  const pl=await placeSearch(q);
+  const p=pl.find(x=>/아파트|주거/.test(x.category_name||""))||pl[0];
+  if(p) goPlace(p);
+  else { const box=$("#q"); if(box){ box.value=q; onSearch(); } }
+}
 let searchSeq=0;
 async function goPlace(p){
   const lat=+p.y, lng=+p.x;
