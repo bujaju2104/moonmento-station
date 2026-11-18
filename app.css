@@ -270,3 +270,12 @@ details.manual summary{cursor:pointer;color:var(--muted);font-size:14px;padding:
 .zbtns .nv{background:#03c75a;border-color:#03c75a;color:#fff}
 @media (max-width:420px){.zdg{grid-template-columns:1fr 1fr}.zprice{font-size:28px}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* 단지 가격 지도 */
+.pm{transform:translate(-50%,0);display:flex;flex-direction:column;align-items:center;cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+.pm b{background:#1d5c47;color:#fff;font-size:12px;font-weight:700;padding:2px 7px;border-radius:6px 6px 0 0;white-space:nowrap;font-family:var(--f-num)}
+.pm span{background:#fff;color:#15201b;font-size:10.5px;padding:1px 6px;border:1.5px solid #1d5c47;border-top:0;border-radius:0 0 6px 6px;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.pm::after{content:"";border:5px solid transparent;border-top-color:#1d5c47}
+.pm.hi b{background:#b3372e}.pm.hi span{border-color:#b3372e}.pm.hi::after{border-top-color:#b3372e}
+.pm:hover{z-index:10}
+.pmhint{position:absolute;left:50%;top:10px;z-index:5!important;transform:translateX(-50%);background:rgba(18,36,29,.88);color:#fff;font-size:12.5px;padding:6px 12px;border-radius:16px;z-index:3;pointer-events:none;white-space:nowrap}
