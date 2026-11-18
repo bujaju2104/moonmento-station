@@ -135,6 +135,9 @@ MM.start = async function(){
   drawLines(); drawStations();
   K.event.addListener(map,"zoom_changed",zoomClass); zoomClass();
   K.event.addListener(map,"idle",findExtraStations);
+  K.event.addListener(map,"idle",()=>{ clearTimeout(pmTimer); pmTimer=setTimeout(priceMapIdle,350); });
+  pmHint=document.createElement("div"); pmHint.className="pmhint"; pmHint.textContent="지도를 확대하면 단지별 최근 실거래가가 보여요";
+  $("#map").appendChild(pmHint);
   hideMsg();
   const h=decodeURIComponent(location.hash.slice(1));
   if(h){ const s=SUB.stations.find(x=>x.name===h.replace(/역$/,"")); if(s) selectStation(s); }
@@ -322,7 +325,48 @@ function drawApts(list){
 }
 
 /* ---------- 화면 ---------- */
-function refresh(soft){ const list=stationApts(); drawApts(list); renderPanel(list); }
+function refresh(soft){ const list=stationApts(); drawApts(list); renderPanel(list); drawPriceMap(); }
+
+/* ---------- 단지 가격 지도: 확대하면 화면 안 단지마다 최근 실거래가 말풍선 ---------- */
+let pmOverlays=[], pmJob=0, pmTimer=null, pmHint=null;
+function pmClear(){ pmOverlays.forEach(o=>o.setMap(null)); pmOverlays=[]; }
+function pmHigh(a){ const T=a.t, last=T[T.length-1], k=Math.floor(last[2]/100); const same=T.filter(t=>Math.floor(t[2]/100)===k); return same.length>1&&last[1]>=Math.max(...same.map(t=>t[1])); }
+function drawPriceMap(){
+  pmClear(); if(!map) return;
+  const lv=map.getLevel();
+  if(pmHint) pmHint.hidden=lv<=5;
+  if(lv>5) return;
+  const b=map.getBounds(), sw=b.getSouthWest(), ne=b.getNorthEast();
+  const shown=new Set(aptOverlays.map(o=>o.a));
+  const list=[];
+  for(const a of APTS){ if(!a.t.length||shown.has(a)) continue; const q=pos(a); if(!q) continue;
+    if(q[0]<sw.getLat()||q[0]>ne.getLat()||q[1]<sw.getLng()||q[1]>ne.getLng()) continue; list.push({a,q}); }
+  list.sort((x,y)=>y.a.t.length-x.a.t.length);
+  const K=kakao.maps;
+  list.slice(0,lv<=3?250:150).forEach(({a,q})=>{
+    const last=a.t[a.t.length-1], hi=pmHigh(a);
+    const el=document.createElement("div"); el.className="pm"+(hi?" hi":"");
+    el.innerHTML=`<b>${wonShort(last[1])}${hi?" ↑":""}</b><span>${esc(a.n)} · ${Math.round(last[2]/100/3.3058)}평</span>`;
+    el.title=`${a.n} · 최근 ${won(last[1])} (${ymd(last[0])}, 전용 ${Math.floor(last[2]/100)}㎡)${hi?" · 같은 평형 1년 최고가":""}`;
+    el.addEventListener("click",e=>{ e.stopPropagation(); openApt(a); });
+    pmOverlays.push(new K.CustomOverlay({map, position:new K.LatLng(q[0],q[1]), content:el, zIndex:4, clickable:true, yAnchor:1}));
+  });
+}
+async function priceMapIdle(){
+  if(!map) return; drawPriceMap();
+  if(map.getLevel()>5) return;
+  const job=++pmJob; const c=map.getCenter(); const p=[c.getLat(),c.getLng()];
+  const codes=await ensureNear(p, 1500); if(job!==pmJob) return;
+  drawPriceMap();
+  if(!ps) return;
+  const cs=new Set(codes);
+  const todo=APTS.filter(a=>cs.has(a.c)&&a.t.length&&!a.p&&!(aptKey(a) in geoCache)).sort((x,y)=>y.t.length-x.t.length).slice(0,40);
+  if(!todo.length) return;
+  const loc=new kakao.maps.LatLng(p[0],p[1]); let i=0;
+  const worker=async()=>{ while(i<todo.length&&job===pmJob){ const a=todo[i++]; geoCache[aptKey(a)]=await findApt(a,loc); await new Promise(r=>setTimeout(r,90)); } };
+  await Promise.all([worker(),worker(),worker()]);
+  saveGeo(); if(job===pmJob) drawPriceMap();
+}
 const QUICK=["신당","청구","약수","왕십리","동대문역사문화공원","충정로","공덕","옥수","금호","강남","잠실","목동"];
 function renderPanel(list){
   if(!SUB){ $("#panel").innerHTML=`<div class="empty">자료를 불러오는 중이에요…</div>`; return; }
