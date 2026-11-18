@@ -28,3 +28,15 @@ test('locateMany keeps order and leaves misses without coordinates', async () =>
   assert.strictEqual(out[1].apt, '없는단지');
   assert.strictEqual(out[1].lat, undefined);
 });
+
+test('waits on rate_limited and does not cache a miss caused by it', async () => {
+  _cache.clear();
+  let n = 0;
+  const fetchImpl = async () => { n++; return n === 1 ? { ok: false, status: 429, json: async () => ({ error: 'rate_limited', retry_after_ms: 1 }) } : { ok: true, status: 200, json: async () => ({ documents: [doc()] }) }; };
+  const r = await locateApt('서울특별시 종로구', '창신동', '창신쌍용1', fetchImpl);
+  assert.strictEqual(r.lat, 37.580511);
+  _cache.clear();
+  const busy = async () => ({ ok: false, status: 429, json: async () => ({ error: 'rate_limited', retry_after_ms: 1 }) });
+  assert.strictEqual(await locateApt('서울특별시 종로구', '창신동', '창신쌍용2', busy), null);
+  assert.strictEqual(_cache.has('서울특별시 종로구|창신동|창신쌍용2'), false);
+});
