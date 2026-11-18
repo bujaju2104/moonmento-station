@@ -4,6 +4,7 @@
 const { fetchRegion, fetchMonth, buildDoc, MolitError, withRequestKey } = require('../lib/molit');
 const { REGIONS, BY_CODE } = require('../lib/regions');
 const { brTitle } = require('../lib/building');
+const { locateMany } = require('../lib/geo');
 
 const SERVER = { name: 'moonmento-rt', title: '문멘토 실거래', version: '1.0.0' };
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -58,6 +59,20 @@ const TOOLS = [
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
+  {
+    name: 'apt_geo',
+    title: '단지 위치 찾기',
+    description: '시군구 안 아파트 단지들의 위치(위도·경도)를 카카오 장소 검색으로 찾는다. 중개노트 지도에 단지를 표시할 때 쓴다. 한 번에 40개까지.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        lawd_cd: CODE,
+        items: { type: 'array', maxItems: 40, items: { type: 'object', properties: { apt: { type: 'string' }, dong: { type: 'string' } }, required: ['apt'] }, description: '단지 이름과 법정동 (예: {apt:"창신쌍용1", dong:"창신동"})' },
+      },
+      required: ['lawd_cd', 'items'],
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
 ];
 
 const bad = (msg) => { throw new MolitError(msg); };
@@ -94,6 +109,16 @@ async function callTool(name, a = {}) {
     const kind = a.kind === '분양권' ? '분양권' : '매매';
     const rows = await fetchRegion(code, months, kind);
     return { text: buildDoc(code, months, rows) + (kind === '분양권' ? '\n#KIND|분양권' : '') };
+  }
+  if (name === 'apt_geo') {
+    const code = checkCode(a.lawd_cd);
+    const items = (Array.isArray(a.items) ? a.items : []).filter((x) => x && x.apt).slice(0, 40).map((x) => ({ apt: String(x.apt).slice(0, 40), dong: String(x.dong || '').slice(0, 20) }));
+    if (!items.length) bad('찾을 단지(items)를 넣어 주세요.');
+    const r = BY_CODE[code];
+    const region = r ? `${r.sido} ${r.name}` : '';
+    const out = await locateMany(region, items);
+    const found = out.filter((x) => x.lat);
+    return { text: [`#GEO|${code}|${found.length}/${out.length}`, ...out.map((x) => `${x.apt}|${x.dong}|${x.lat || ''}|${x.lng || ''}`)].join('\n'), data: { region: code, items: out } };
   }
   const e = new Error('Unknown tool: ' + name);
   e.rpc = -32602;
