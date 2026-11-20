@@ -51,6 +51,11 @@ SheetJS xlsx 0.18.5 (cdnjs), pdf.js 3.11.174 (cdnjs), tesseract.js 5.1.1 + 한�
 - `POST /mcp` → Claude 사용자 지정 커넥터 「문멘토 실거래」 (문멘토 중개노트 앱과 Claude 대화에서 사용). 도구: `find_region`, `apt_trades`, `apt_trade_doc` (`kind: "분양권"` 지원).
 - 코드: `api/rt.js`, `api/mcp.js`, `lib/molit.js`(국토부 호출·해제 거래 제외·상세→일반 API 자동 전환), `lib/regions.js`(전국 250개 시군구)
 
+## GPT 교차 검증 (커넥터 도구 `ask_gpt`)
+- Claude 대화에서 「문멘토 실거래」 커넥터의 `ask_gpt`로 정리한 내용을 OpenAI GPT에게 보내 항목별 [맞음]/[틀림]/[확인 불가]와 근거(법 조항·공식 출처)를 받아요. 웹 검색을 켜서 묻고, 모델이 웹 검색을 못 쓰면 검색 없이 묻고 그 사실을 표시해요.
+- Vercel 환경변수: `OPENAI_API_KEY`(platform.openai.com에서 발급, ChatGPT 구독과 별도 종량제), `OPENAI_MODEL`(OpenAI 콘솔에 보이는 모델 이름 그대로). 넣은 뒤 다시 배포해야 적용돼요.
+- 코드: `lib/gpt.js` (OpenAI Responses API)
+
 ## 건축물대장 (국토부 건축HUB 표제부)
 - 매물 → 재개발 구역별 보기 → 매물 상세 → **🏢 건축물대장 불러오기**: 지번 주소(없으면 단지명)를 카카오로 필지(법정동 코드·본번·부번)로 바꾼 뒤 `/api/building`으로 표제부를 받아 용도·구조·연면적·층수·세대·사용승인일·도로명을 보여 줘요. **매물 칸에 채우기**로 사용승인일·구조·용도(단독은 연면적·층수까지)를 매물에 넣어요.
 - `GET /api/building?sigunguCd=11140&bjdongCd=16200&bun=236&ji=206[&dong=207동]` (CDN 하루 캐시), 커넥터 도구 `building_title`

@@ -5,6 +5,7 @@ const { fetchRegion, fetchMonth, buildDoc, MolitError, withRequestKey } = requir
 const { REGIONS, BY_CODE } = require('../lib/regions');
 const { brTitle } = require('../lib/building');
 const { locateMany } = require('../lib/geo');
+const { askGpt, GptError } = require('../lib/gpt');
 
 const SERVER = { name: 'moonmento-rt', title: '문멘토 실거래', version: '1.0.0' };
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -73,6 +74,17 @@ const TOOLS = [
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
+  {
+    name: 'ask_gpt',
+    title: 'GPT 교차 검증',
+    description: 'Claude가 정리한 부동산·청약·세금 내용을 OpenAI GPT(웹 검색 사용)에게 보내 항목별로 맞음/틀림/확인 불가와 근거(법 조항·공식 출처)를 받아 온다. 틀리면 안 되는 상담 내용을 교차 확인할 때 쓴다. 결과가 Claude와 다르면 법령 원문으로 다시 확인할 것.',
+    inputSchema: { type: 'object', properties: {
+      question: { type: 'string', description: 'GPT에게 물어볼 것 (예: "아래 청약 상담 정리에서 틀린 부분만 찾아줘")' },
+      context: { type: 'string', description: '검증할 정리 내용 원문 (선택, 최대 2만 자)' },
+      search: { type: 'boolean', default: true, description: '웹 검색 사용 여부 (기본 사용)' } },
+      required: ['question'] },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
 ];
 
 const bad = (msg) => { throw new MolitError(msg); };
@@ -120,6 +132,11 @@ async function callTool(name, a = {}) {
     const found = out.filter((x) => x.lat);
     return { text: [`#GEO|${code}|${found.length}/${out.length}`, ...out.map((x) => `${x.apt}|${x.dong}|${x.lat || ''}|${x.lng || ''}`)].join('\n'), data: { region: code, items: out } };
   }
+  if (name === 'ask_gpt') {
+    const r = await askGpt({ question: a.question, context: a.context, search: a.search !== false });
+    const src = r.sources.length ? '\n\n출처:\n' + r.sources.map((x) => `- ${x.title} ${x.url}`).join('\n') : '';
+    return { text: `[GPT 답변 · 모델 ${r.model} · 웹 검색 ${r.usedSearch ? '사용' : '미사용'}]\n${r.answer}${src}`, data: r };
+  }
   const e = new Error('Unknown tool: ' + name);
   e.rpc = -32602;
   throw e;
@@ -153,7 +170,7 @@ async function handle(msg) {
           return ok(result);
         } catch (e) {
           if (e.rpc) return fail(e.rpc, e.message);
-          return ok({ isError: true, content: [{ type: 'text', text: e instanceof MolitError ? e.message : '조회 중 오류가 났어요: ' + e.message }] });
+          return ok({ isError: true, content: [{ type: 'text', text: (e instanceof MolitError || e instanceof GptError) ? e.message : '조회 중 오류가 났어요: ' + e.message }] });
         }
       }
       default:
