@@ -43,10 +43,10 @@ test('city district names keep only the last word for matching', async () => {
   assert.equal(r.body.name, '경기도 수원 장안구');
 });
 
-test('rejects a bad code and reports a missing key', async () => {
+test('rejects a bad code; without a key it asks the k-skill-proxy instead', async () => {
   assert.equal((await get('/api/rt?code=abc')).status, 400);
   const save = process.env.MOLIT_SERVICE_KEY; delete process.env.MOLIT_SERVICE_KEY;
-  try { const r = await get('/api/rt?code=11140'); assert.equal(r.status, 503); assert.match(r.body.error, /인증키/); }
+  try { calls = []; await get('/api/rt?code=11140&months=1'); assert.ok(calls.length && calls.every((u) => u.includes('k-skill-proxy'))); }
   finally { process.env.MOLIT_SERVICE_KEY = save; }
 });
 
